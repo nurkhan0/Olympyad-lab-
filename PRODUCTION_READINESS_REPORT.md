@@ -169,3 +169,31 @@ The reported symptom — `listCourses()` receiving HTTP 401 after successful log
 4. Re-run `npx playwright test` with `E2E_BASE_URL=https://$DOMAIN` (no
    `E2E_IGNORE_TLS_ERRORS` — a public CA must validate natively).
 5. Configure off-site backup sync + a monitored restore drill.
+
+
+---
+
+# Public Release Preparation — 2026-11-12 (final audit session)
+
+Code freeze: **git tag `v1.0.0-rc1`** (1472 files committed; automated scan confirmed none
+of the four real secret values appear anywhere in the staged tree; `.env*`, certs, backups,
+runtime artifacts gitignored).
+
+## Configuration audit results (all actually checked)
+
+| Check | Result |
+|-------|--------|
+| WebSocket URLs in the production bundle | ✅ no hardcoded `ws://localhost` (page-origin derivation) |
+| ACME challenge routing | ✅ present in both HTTP and HTTPS blocks of the nginx template |
+| HSTS default in production | 🔧 fixed: was 31536000 before public verification — now 0, activation procedure documented (checklist §5) |
+| Canonical production compose | ✅ `docker-compose.production.yml` created: ports 80/443, `${DOMAIN}` env-driven, certbot renewal service, no hardcoded hosts (supersedes legacy `docker-compose.prod.yml`) |
+| Certbot bootstrap | ✅ `scripts/init_production_certs.sh` (throwaway self-signed pair so nginx boots before issuance) |
+| Off-site backups | 🟡 `OFFSITE_COMMAND` hook added to `scripts/backup.sh` — integration remains Pending external action |
+| Secrets in release commit | ✅ scanned programmatically: 0 leaks (1472 files) |
+| Regression after audit changes | ✅ pytest 172/172, production settings asserts (HSTS=0, SSL_REDIRECT=True, COOKIE_SECURE=True), tsc clean |
+
+## Release readiness
+
+See **PUBLIC_RELEASE_CHECKLIST.md** — 13 Verified / 5 Prepared / 3 Pending external action
+/ 0 Blocked. The critical path to the first real pilot: domain+DNS → Let's Encrypt →
+Playwright re-run against the public HTTPS origin (native chain validation) → HSTS.

@@ -257,3 +257,19 @@ Evidence in `PRODUCTION_READINESS_REPORT.md` (HTTPS/TLS section). Summary:
 - Final regression: backend 172, checks/migrations clean, tsc clean, build OK,
   dev E2E 16/16, HTTPS E2E 16/16.
 - Honest gaps: public-CA certificate (real domain), HSTS enablement, off-site backups.
+
+
+---
+
+## Session: Public Release Preparation & Code Freeze (2026-11-12, final)
+
+- **Git**: repository initialized; verified release committed and tagged **v1.0.0-rc1**
+  (programmatic secret scan of all 1472 staged files: 0 leaks; runtime artifacts gitignored).
+- **Audit fixes**: `SECURE_HSTS_SECONDS` defaults to 0 in production (was 1 year — HSTS must
+  be enabled only after public HTTPS verification); canonical
+  `docker-compose.production.yml` created (ports 80/443, `${DOMAIN}` env-driven, certbot
+  renewal, supersedes legacy prod compose); `scripts/init_production_certs.sh` bootstrap;
+  `OFFSITE_COMMAND` hook in backup.sh.
+- **New**: `PUBLIC_RELEASE_CHECKLIST.md` — 20 items, statuses Verified/Prepared/Pending/Blocked.
+- **Regression**: pytest 172/172; production settings asserts pass; tsc clean.
+- Remaining: domain+DNS → Let's Encrypt → public-HTTPS E2E re-run → HSTS → off-site backups.
