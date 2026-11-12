@@ -2,8 +2,16 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 
 import { refreshSession } from './session';
 
+/**
+ * API base URL: relative `/api/v1` by default (same-origin deployments behind
+ * a reverse proxy). For split deployments — frontend on Vercel, backend on a
+ * separate HTTPS host — set VITE_API_BASE_URL at build time, e.g.
+ * `https://api.example.com/api/v1`. No hostname is hardcoded.
+ */
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim() || '/api/v1';
+
 const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });

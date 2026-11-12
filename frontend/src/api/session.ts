@@ -13,8 +13,11 @@
  */
 import axios from 'axios';
 
+// Same base resolution as axios.ts (VITE_API_BASE_URL or relative /api/v1).
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').trim() || '/api/v1';
+
 const refreshClient = axios.create({
-  baseURL: '/api/v1',
+  baseURL: API_BASE_URL,
   withCredentials: true,
   headers: { 'Content-Type': 'application/json' },
 });
