@@ -1,0 +1,100 @@
+# HTTPS server template for the CodeArena stack.
+# Rendered by the nginx image's envsubst mechanism (/etc/nginx/templates/*.template
+# -> /etc/nginx/conf.d/*.conf). Only variables DEFINED in the container environment
+# are substituted (${DOMAIN}, ${CERT_DIR}, ${FRONTEND_ROOT}); nginx runtime variables
+# like $host/$remote_addr are untouched.
+
+upstream django {
+    server django:8000;
+}
+
+# HTTP: ACME challenges + redirect to HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        # REDIRECT_PORT_SUFFIX is empty in production (443 implied) and set to
+        # ":8443" in the local rehearsal so the redirect keeps the port.
+        return 301 https://$host${REDIRECT_PORT_SUFFIX}$request_uri;
+    }
+}
+
+# HTTPS: TLS termination for the SPA + API + WebSocket
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    ssl_trusted_certificate ${CERT_DIR}/chain.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Security headers. HSTS is intentionally NOT enabled here — enable it
+    # (SECURE_HSTS_SECONDS in Django settings and/or nginx) only after the
+    # certificate chain has been verified on the real domain.
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    client_max_body_size 100M;
+
+    root ${FRONTEND_ROOT};
+    index index.html;
+
+    location /static/ {
+        alias /app/staticfiles/;
+        expires 7d;
+        access_log off;
+    }
+
+    location /media/ {
+        alias /app/media/;
+        expires 30d;
+        access_log off;
+    }
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # WebSocket upgrade for submission status (Channels via Daphne) — wss://
+    location /ws/ {
+        proxy_pass http://django;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 86400;
+    }
+
+    location ~ ^/(api|admin|health)/ {
+        proxy_pass http://django;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

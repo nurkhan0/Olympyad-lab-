@@ -1,0 +1,145 @@
+# CodeArena HTTPS rehearsal stack.
+# Runs the same services as docker-compose.staging.yml but terminates TLS in
+# nginx and reuses the seeded staging data volumes (external).
+#
+# Certificates: for the LOCAL rehearsal a dedicated local CA signs a server
+# certificate for localhost/127.0.0.1 (scripts/generate_dev_certs.sh, output in
+# ./certs/dev — gitignored). For a real domain, replace the mounts with
+# /etc/letsencrypt/live/$DOMAIN (certbot) — the template needs no changes.
+#
+# Usage:
+#   docker compose -f docker-compose.staging.yml down        # keep volumes
+#   scripts/generate_dev_certs.sh
+#   docker compose -f docker-compose.https.yml up -d --build
+#   curl --cacert certs/dev/ca.crt https://localhost:8443/health/
+#
+# Security posture: COOKIE_SECURE=True, SECURE_SSL_REDIRECT=True,
+# SECURE_PROXY_SSL_HEADER via X-Forwarded-Proto. HSTS stays at 0 until the
+# certificate chain is verified on the real production domain.
+
+name: codearena-https
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    env_file: .env.staging
+    volumes:
+      - staging_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - staging_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  django:
+    build: ./backend
+    env_file: .env.staging
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      COOKIE_SECURE: "True"
+      SECURE_SSL_REDIRECT: "True"
+      # HSTS deliberately 0 during the TLS rehearsal (enable on real domain).
+      SECURE_HSTS_SECONDS: "0"
+      CSRF_TRUSTED_ORIGINS: "https://localhost:8443"
+      ALLOWED_HOSTS: "localhost,127.0.0.1,nginx"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - staging_static_files:/app/staticfiles
+      - staging_media_files:/app/media
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  celery_worker:
+    build: ./backend
+    entrypoint: []
+    command:
+      - celery
+      - -A
+      - config
+      - worker
+      - --loglevel=info
+      - --pool=solo
+      - --queues=default,judge,contests
+      - --hostname=https-worker@%h
+    env_file: .env.staging
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "celery", "-A", "config", "inspect", "ping", "--timeout=5"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  celery_beat:
+    build: ./backend
+    entrypoint: []
+    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env.staging
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"       # ACME + HTTP->HTTPS redirect
+      - "8443:443"    # TLS rehearsal endpoint (443 in production)
+    environment:
+      DOMAIN: localhost
+      CERT_DIR: /etc/nginx/certs
+      REDIRECT_PORT_SUFFIX: ":8443"
+      FRONTEND_ROOT: /var/www/app
+    depends_on:
+      django: {condition: service_healthy}
+    volumes:
+      - ./nginx/https/app.conf.template:/etc/nginx/templates/app.conf.template:ro
+      - ./certs/dev:/etc/nginx/certs:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - ./frontend/dist:/var/www/app:ro
+      - staging_static_files:/app/staticfiles:ro
+      - staging_media_files:/app/media:ro
+    restart: unless-stopped
+
+volumes:
+  # Reuse the seeded staging data (external volumes created by
+  # docker-compose.staging.yml; do NOT delete them with `down -v`).
+  staging_postgres_data:
+    external: true
+    name: codearena-main_staging_postgres_data
+  staging_redis_data:
+    external: true
+    name: codearena-main_staging_redis_data
+  staging_static_files:
+    external: true
+    name: codearena-main_staging_static_files
+  staging_media_files:
+    external: true
+    name: codearena-main_staging_media_files

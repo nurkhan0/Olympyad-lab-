@@ -1,0 +1,87 @@
+version: "3.9"
+services:
+  postgres:
+    image: postgres:15-alpine
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  django:
+    build: ./backend
+    env_file: .env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - static_files:/app/staticfiles
+      - media_files:/app/media
+    expose: ["8000"]
+    restart: unless-stopped
+
+  celery_worker:
+    build: ./backend
+    entrypoint: []
+    command: celery -A config worker --loglevel=info --concurrency=4 -Q default,judge,contests
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  celery_beat:
+    build: ./backend
+    entrypoint: []
+    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  flower:
+    image: mher/flower:2.0
+    command: celery flower --broker=redis://redis:6379/0 --port=5555
+    ports: ["5555:5555"]
+    depends_on:
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports: ["80:80", "443:443"]
+    depends_on: [django]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - static_files:/app/staticfiles:ro
+      - media_files:/app/media:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+  media_files:
