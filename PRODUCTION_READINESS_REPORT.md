@@ -194,6 +194,9 @@ runtime artifacts gitignored).
 
 ## Release readiness
 
-See **PUBLIC_RELEASE_CHECKLIST.md** — 13 Verified / 5 Prepared / 3 Pending external action
-/ 0 Blocked. The critical path to the first real pilot: domain+DNS → Let's Encrypt →
-Playwright re-run against the public HTTPS origin (native chain validation) → HSTS.
+See **PUBLIC_RELEASE_CHECKLIST.md** — 20 sections, 0 Blocked: 10 Verified, 3 Verified-locally
++ Prepared for public re-verification (§3 redirect, §4 cookies, §6 WSS), 1 Verified-local +
+Pending off-site (§13), 1 Prepared + Pending (§2 Let's Encrypt), 4 Prepared (§5 HSTS, §14
+monitoring, §15 error logging, §19 onboarding), 1 Pending external action (§1 domain & DNS).
+The critical path to the first real pilot: domain+DNS → Let's Encrypt → Playwright re-run
+against the public HTTPS origin (native chain validation) → HSTS.

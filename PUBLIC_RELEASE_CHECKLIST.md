@@ -148,8 +148,15 @@ equivalent to a publicly trusted certificate — user devices will not trust it 
 
 ---
 
-**Summary**: Verified 13 · Prepared 5 · Pending external action 3 (domain/DNS, Let's Encrypt,
-off-site storage) · Blocked 0.
+**Summary (exact, per section titles)** — 20 sections, 0 Blocked:
 
-The single critical path to the pilot: §1 domain/DNS → §2 certificate → re-run the
-Playwright suite with `E2E_BASE_URL=https://$DOMAIN` (no `E2E_IGNORE_TLS_ERRORS`) → §5 HSTS.
+| Status | Sections | Count |
+|--------|----------|-------|
+| Verified | §7 PostgreSQL, §8 Redis, §9 Celery, §10 Judge, §11 Static, §12 Media, §16 Migration, §17 Rollback, §18 Accounts, §20 Code freeze | 10 |
+| Verified locally + Prepared (public re-verification) | §3 Redirect, §4 Cookies, §6 WSS | 3 |
+| Verified (local) + Pending external action (off-site) | §13 Backups | 1 |
+| Prepared + Pending external action | §2 Let's Encrypt | 1 |
+| Prepared | §5 HSTS, §14 Monitoring, §15 Error logging, §19 Onboarding | 4 |
+| Pending external action | §1 Domain & DNS | 1 |
+
+
