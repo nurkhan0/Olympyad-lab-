@@ -200,3 +200,36 @@ Pending off-site (§13), 1 Prepared + Pending (§2 Let's Encrypt), 4 Prepared (�
 monitoring, §15 error logging, §19 onboarding), 1 Pending external action (§1 domain & DNS).
 The critical path to the first real pilot: domain+DNS → Let's Encrypt → Playwright re-run
 against the public HTTPS origin (native chain validation) → HSTS.
+
+
+---
+
+# FINAL RELEASE SUMMARY — CodeArena v1.0.0-rc2
+
+| Item | Value |
+|------|-------|
+| Release version | **v1.0.0-rc2** (canonical RC; rc1 preserved at f66dd48, never moved) |
+| Final commit | `4a47ecc` — "release audit: exact checklist arithmetic (20 sections), secret/environment audit (full history clean), release summary" |
+| Git tags | `v1.0.0-rc1` → f66dd48 · `v1.0.0-rc2` → 4a47ecc (both local-only; no remote configured) |
+| Backend tests | **172/172 passed** |
+| Frontend | `tsc --noEmit` clean · production build OK · 0 hardcoded WS hosts in bundle |
+| E2E | 16/16 development (HTTP) · 16/16 HTTPS (local-CA TLS) — both against live stacks with real Postgres/Redis/non-eager Celery judge |
+| Infrastructure verified | PostgreSQL · Redis · nginx TLS+WSS (`101` + `WSCONNECT` evidence) · Secure/HttpOnly refresh cookies · backup → AES-256 encryption → restore round-trip |
+| Secret audit | full-history scan of both commits against all 5 real secret values: **0 leaks** → rotation **not required** |
+| Release checklist | 20 sections, 0 Blocked — 10 Verified, 3 Verified-locally+Prepared, 1 Verified+Pending (off-site), 1 Prepared+Pending (Let's Encrypt), 4 Prepared, 1 Pending (domain/DNS) |
+
+## Remaining external dependencies (honest)
+
+1. Domain + DNS (A/AAAA → server; ports 80/443 reachable).
+2. Publicly trusted Let's Encrypt certificate (procedure: checklist §2).
+3. Off-site backup storage + one restore-from-off-site drill (checklist §13).
+
+## Exact steps: RC → public pilot
+
+1. `cp .env.example .env.prod` — fill DOMAIN, ACME_EMAIL, secrets, origins (checklist §1–2).
+2. `scripts/init_production_certs.sh` → `docker compose -f docker-compose.production.yml up -d --build`.
+3. `certbot certonly --webroot …` → `restart nginx` → verify chain natively (no custom CA).
+4. `npx playwright test` with `E2E_BASE_URL=https://$DOMAIN` — **no** `E2E_IGNORE_TLS_ERRORS`.
+5. Activate HSTS (checklist §5), configure off-site backups + restore drill (§13).
+6. Pilot 1: small teacher/student group (courses → materials → judge tasks → one olympiad).
+   Pilot 2: scale after load/backup/judge-stability review.
