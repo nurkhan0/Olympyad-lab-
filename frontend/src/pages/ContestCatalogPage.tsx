@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 
 import { listContests, type ContestList, type ContestFilters, type PaginatedContests } from '../api/contestsApi';
 import { formatDateTime } from '../utils/date';
-import Navbar from '../components/Navbar';
 import FullPageSpinner from '../components/FullPageSpinner';
 
 const statusLabels: Record<string, string> = {
@@ -39,7 +38,6 @@ export default function ContestCatalogPage() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-red-600">Ошибка загрузки соревнований</h1>
@@ -55,7 +53,6 @@ export default function ContestCatalogPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-3xl font-bold text-gray-900">🏆 Контесты</h1>

@@ -12,14 +12,12 @@ import {
 } from '../api/contestsApi';
 import { createSubmission } from '../api/submissionsApi';
 import CodeEditor, { DEFAULT_SNIPPETS, type EditorLanguage } from '../components/CodeEditor';
-import Navbar from '../components/Navbar';
 import { useAuthStore } from '../store/authStore';
 import SubmissionStatus from '../components/SubmissionStatus';
 
 function ContestActiveSkeleton() {
   return (
     <div className="min-h-screen bg-gray-50 animate-pulse">
-      <Navbar />
       <div className="mx-auto max-w-7xl px-4 py-6">
         <div className="grid gap-6 lg:grid-cols-3">
           <aside className="lg:col-span-1">
@@ -100,7 +98,6 @@ export default function ContestActivePage() {
   if (contestError || !contest) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-red-600">Контест не найден</h1>
@@ -130,7 +127,6 @@ export default function ContestActivePage() {
   if (!isAuthenticated || user?.role !== 'student' || !isRegistered || !isRunning) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-red-600">
@@ -178,7 +174,6 @@ export default function ContestActivePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
       <div className="mx-auto max-w-7xl px-4 py-6">
         {/* Header with timer */}
         <div className="mb-6 flex items-center justify-between gap-4">

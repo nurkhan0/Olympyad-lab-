@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 
 import { listContests, type ContestList, type ContestFilters } from '../api/contestsApi';
 import { formatDateTime } from '../utils/date';
-import Navbar from '../components/Navbar';
 import FullPageSpinner from '../components/FullPageSpinner';
 
 export default function ContestHistoryPage() {
@@ -22,7 +21,6 @@ export default function ContestHistoryPage() {
   if (error) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-red-600">Ошибка загрузки истории</h1>
@@ -37,7 +35,6 @@ export default function ContestHistoryPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-6">
           <h1 className="text-3xl font-bold text-gray-900">📜 История контестов</h1>

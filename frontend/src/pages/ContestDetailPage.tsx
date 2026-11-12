@@ -12,7 +12,6 @@ import {
   type ContestRegistration,
 } from '../api/contestsApi';
 import { formatDateTime } from '../utils/date';
-import Navbar from '../components/Navbar';
 import FullPageSpinner from '../components/FullPageSpinner';
 import { useAuthStore } from '../store/authStore';
 
@@ -95,7 +94,6 @@ export default function ContestDetailPage() {
   if (error || !contest) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-red-600">Контест не найден</h1>
@@ -144,7 +142,6 @@ export default function ContestDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>

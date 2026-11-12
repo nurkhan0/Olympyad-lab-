@@ -29,10 +29,16 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
-  },
+  // The local dev webServer is only used for default (5173) runs; staging/HTTPS
+  // rehearsals set E2E_BASE_URL and manage their own stack.
+  ...(process.env.E2E_BASE_URL
+    ? {}
+    : {
+        webServer: {
+          command: 'npm run dev',
+          url: 'http://localhost:5173',
+          reuseExistingServer: !process.env.CI,
+          timeout: 120000,
+        },
+      }),
 });

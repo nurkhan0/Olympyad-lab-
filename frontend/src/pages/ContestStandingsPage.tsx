@@ -7,7 +7,6 @@ import {
   listContestRegistrations,
   type ContestRegistration,
 } from '../api/contestsApi';
-import Navbar from '../components/Navbar';
 import FullPageSpinner from '../components/FullPageSpinner';
 import { useAuthStore } from '../store/authStore';
 
@@ -46,7 +45,6 @@ export default function ContestStandingsPage() {
   if (contestError || standingsError || !contest) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <h1 className="text-2xl font-bold text-red-600">Не удалось загрузить таблицу результатов</h1>
@@ -71,7 +69,6 @@ export default function ContestStandingsPage() {
   if (!canViewStandings && isUpcoming) {
     return (
       <div className="min-h-screen bg-gray-50">
-        <Navbar />
         <main className="mx-auto max-w-7xl px-4 py-12">
           <div className="text-center">
             <Link
@@ -105,7 +102,6 @@ export default function ContestStandingsPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navbar />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-6 flex items-center justify-between gap-4">
           <div>
