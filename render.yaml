@@ -1,0 +1,135 @@
+# CodeArena public beta — Render Blueprint (backend: web + worker + Postgres + Key Value).
+# Spec: https://render.com/docs/blueprint-spec
+#
+# Frontend lives on Vercel (frontend/): vercel.json proxies /api/* to
+# codearena-api — replace REPLACE_ME_RENDER_HOST there after the first deploy.
+# WebSockets bypass Vercel: set VITE_WS_URL=wss://<codearena-api host>.
+#
+# The judge runs user code with a stripped environment and POSIX rlimits —
+# risk reduction, NOT real isolation (see backend/apps/submissions/runner.py).
+
+databases:
+  - name: codearena-db
+    databaseName: codearena
+    user: codearena
+    plan: free          # TODO(verify): Render free Postgres instances expire after ~30 days — check current terms before relying on it.
+    region: frankfurt
+
+services:
+  - type: web
+    name: codearena-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    branch: main
+    region: frankfurt
+    plan: free          # TODO(verify): free web services spin down when idle (slow first request after idle) — prefer 0.5c-512mb for the pilot.
+    healthCheckPath: /health/
+    envVars:
+      - key: ROLE
+        value: web
+      - key: DEBUG
+        value: 'False'
+      - key: SECURE_HSTS_SECONDS
+        value: '0'
+      # Render's internal health check connects over plain HTTP; if it does not
+      # send X-Forwarded-Proto: https (TODO(verify)), the production default
+      # SECURE_SSL_REDIRECT=True would 301 /health/ and fail the deploy. TLS is
+      # terminated at the edge (Render LB / Vercel), so the Django-level
+      # redirect is redundant for the beta.
+      - key: SECURE_SSL_REDIRECT
+        value: 'False'
+      # Identical secrets on web and worker: generated once in the shared
+      # group, injected into both services via fromGroup.
+      - fromGroup: codearena-shared-secrets
+      # fromDatabase supports only connectionString/connectionPoolString/user/
+      # password/database — HOST and PORT are NOT referenceable, so they are
+      # filled in the dashboard from the codearena-db "Info" page.
+      - key: POSTGRES_HOST
+        sync: false     # TODO(verify): internal hostname shown on the codearena-db dashboard
+      - key: POSTGRES_PORT
+        sync: false     # TODO(verify): internal Postgres port (5432) shown on the dashboard
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: codearena-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: codearena-db
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: codearena-db
+          property: database
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: codearena-redis
+          property: connectionString
+      # Required at Django settings import (no default in backend settings).
+      - key: ALLOWED_HOSTS
+        sync: false     # e.g. the codearena-api.onrender.com host (no scheme)
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false     # e.g. https://<vercel-app>.vercel.app
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false     # e.g. https://<vercel-app>.vercel.app
+
+  - type: worker
+    name: codearena-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    branch: main
+    region: frankfurt
+    plan: free          # TODO(verify): 0.1 CPU may make JVM/g++ compiles exceed the 15 s compile limit — prefer 0.5c-512mb if Java/C++ matter for the beta.
+    envVars:
+      - key: ROLE
+        value: worker
+      - key: DEBUG
+        value: 'False'
+      - key: SECURE_HSTS_SECONDS
+        value: '0'
+      - fromGroup: codearena-shared-secrets
+      # Must match the codearena-api values (same database, same secrets).
+      - key: POSTGRES_HOST
+        sync: false     # same as codearena-api
+      - key: POSTGRES_PORT
+        sync: false     # same as codearena-api
+      - key: POSTGRES_USER
+        fromDatabase:
+          name: codearena-db
+          property: user
+      - key: POSTGRES_PASSWORD
+        fromDatabase:
+          name: codearena-db
+          property: password
+      - key: POSTGRES_DB
+        fromDatabase:
+          name: codearena-db
+          property: database
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: codearena-redis
+          property: connectionString
+      # Django settings import requires ALLOWED_HOSTS on the worker too.
+      - key: ALLOWED_HOSTS
+        sync: false     # same value as codearena-api
+
+  - type: keyvalue
+    name: codearena-redis
+    region: frankfurt
+    plan: free
+    ipAllowList: []     # internal connections only
+    # Celery broker + Channels: never silently evict queued tasks/messages.
+    maxmemoryPolicy: noeviction
+
+envVarGroups:
+  - name: codearena-shared-secrets
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true

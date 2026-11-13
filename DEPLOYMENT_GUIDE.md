@@ -233,3 +233,56 @@ Verified 2026-11-12 against the HTTPS stack:
   in that path.
 - **External DNS / real domain** — required for certbot issuance.
 - Persistent off-host backups (the `backups/` volume is host-local).
+
+## 13. Beta: Render + Vercel (configured in `render.yaml`, NOT yet deployed)
+
+Target: static frontend on Vercel (root dir `frontend`), backend on Render.
+
+### Order of steps
+
+1. Merge `beta-deploy` into `main`, connect the GitHub repo in Render, choose
+   **New → Blueprint**. Render reads `render.yaml` and creates `codearena-api`
+   (web, daphne), `codearena-worker` (Celery worker + embedded beat),
+   `codearena-db` (Postgres, frankfurt), `codearena-redis` (Key Value,
+   internal-only) and the shared secret group (`SECRET_KEY`, `JWT_ACCESS_SECRET`,
+   `JWT_REFRESH_SECRET` generated once — identical on web and worker).
+2. Fill the `sync: false` prompts during creation (on both services where
+   shown): `POSTGRES_HOST` / `POSTGRES_PORT` — from the `codearena-db` "Info"
+   page (the Blueprint spec cannot reference host/port from a database);
+   `ALLOWED_HOSTS` — the `codearena-api.onrender.com` host; `CORS_ALLOWED_ORIGINS`
+   / `CSRF_TRUSTED_ORIGINS` — the Vercel origin (`https://…`).
+3. Wait for the first deploys; `migrate` + `collectstatic` run in the web
+   entrypoint (`ROLE=web`). Verify `https://<render-host>/health/` returns 200
+   (503 until DB/Redis are reachable — the check covers both).
+4. Vercel: import the repo, set **Root Directory = `frontend`**, keep the
+   detected build. Build-time env vars:
+   - `VITE_API_BASE_URL` — leave **empty** (axios/session then use the relative
+     `/api/v1`; the refresh cookie stays same-origin through the Vercel rewrite);
+   - `VITE_WS_URL` — `wss://<render-host>` (**required**: Vercel cannot proxy
+     WebSockets, so `/ws/submissions/…` connects straight to Render).
+5. Edit `frontend/vercel.json`: replace `REPLACE_ME_RENDER_HOST` with the Render
+   host (e.g. `codearena-api.onrender.com`) and redeploy. Until then every
+   `/api/*` request fails on Vercel.
+6. Smoke test: register → submit hello-world (Python; Java/C++ need enough
+   worker CPU — free `0.1 CPU` may exceed the 15 s compile limit) → verdict
+   arrives via WebSocket or the polling fallback.
+
+### Which env var goes where (summary)
+
+| Where | Variables |
+|---|---|
+| Render, shared env group (web + worker) | `SECRET_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (generated) |
+| Render, web + worker | `POSTGRES_USER/PASSWORD/DB` (auto), `REDIS_URL` (auto), `DEBUG=False`, `SECURE_HSTS_SECONDS=0`, `POSTGRES_HOST/PORT` + `ALLOWED_HOSTS` (manual) |
+| Render, web only | `ROLE=web`, `SECURE_SSL_REDIRECT=False` (health check comes over plain HTTP), `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` |
+| Render, worker only | `ROLE=worker` |
+| Vercel build | `VITE_API_BASE_URL` (empty), `VITE_WS_URL=wss://<render-host>` |
+
+### Known limitations
+
+- **Judge isolation is reduced, not real**: user code runs with a stripped
+  environment and POSIX rlimits (`backend/apps/submissions/runner.py`) but
+  still with the worker user's filesystem and network access. Do not accept
+  hostile tenants on the beta.
+- Free Render plans: the web service spins down when idle; free Postgres
+  expires (~30 days); worker `0.1 CPU` is marginal for JVM compiles — see the
+  `TODO(verify)` notes in `render.yaml`.
