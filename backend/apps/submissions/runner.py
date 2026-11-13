@@ -45,7 +45,7 @@ JUDGE_RLIMIT_FSIZE_BYTES_DEFAULT = 64 * 1024 * 1024  # 64 MiB of file output
 JUDGE_RLIMIT_NPROC_DEFAULT = 256  # processes/threads a child may create
 JUDGE_RLIMIT_AS_BYTES_DEFAULT = 1024 * 1024 * 1024  # 1 GiB address space
 JUDGE_RLIMIT_CPU_MARGIN_S_DEFAULT = 2.0  # CPU limit sits ABOVE the wall timeout
-JUDGE_JAVA_XMX_DEFAULT = '256m'  # JVM heap cap (RLIMIT_AS is skipped for java)
+JUDGE_JAVA_XMX_DEFAULT = '128m'  # JVM heap cap (RLIMIT_AS is skipped for java)
 
 
 def judge_limit_profile(
@@ -67,7 +67,7 @@ def judge_limit_profile(
       margin keeps the kernel-side kill ABOVE the judge's own wall timeout so
       an over-running program is still reported as TLE (a SIGXCPU/SIGKILL death
       would otherwise be indistinguishable from a runtime error → RE).
-    - JUDGE_JAVA_XMX ('256m'): JVM heap passed as -Xmx in the java run command.
+    - JUDGE_JAVA_XMX ('128m'): JVM heap passed as -Xmx in the java run command.
     """
     fsize = int(getattr(settings, 'JUDGE_RLIMIT_FSIZE_BYTES', JUDGE_RLIMIT_FSIZE_BYTES_DEFAULT))
     margin = float(getattr(settings, 'JUDGE_RLIMIT_CPU_MARGIN_S', JUDGE_RLIMIT_CPU_MARGIN_S_DEFAULT))
