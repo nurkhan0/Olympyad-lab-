@@ -29,11 +29,21 @@ COOKIE_SECURE = config('COOKIE_SECURE', default=True, cast=bool)
 # Staging rehearsals over plain HTTP must set COOKIE_SECURE=False explicitly.
 
 # CORS: production origins come from the environment — localhost defaults are
-# a development-settings concern only.
+# a development-settings concern only. Normalize: strip trailing slashes,
+# require scheme (http:// or https://), drop empty entries.
 _cors = config('CORS_ALLOWED_ORIGINS', default='', cast=Csv())
-CORS_ALLOWED_ORIGINS = [origin for origin in _cors if origin]
+CORS_ALLOWED_ORIGINS = [
+    origin.rstrip('/')
+    for origin in _cors
+    if origin and (origin.startswith('http://') or origin.startswith('https://'))
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # Trusted origins for CSRF (scheme included), e.g. https://codearena.example.com
+# Normalize same as CORS: strip trailing slashes, require scheme, drop empty.
 _csrf = config('CSRF_TRUSTED_ORIGINS', default='', cast=Csv())
-CSRF_TRUSTED_ORIGINS = [origin for origin in _csrf if origin]
+CSRF_TRUSTED_ORIGINS = [
+    origin.rstrip('/')
+    for origin in _csrf
+    if origin and (origin.startswith('http://') or origin.startswith('https://'))
+]
