@@ -12,7 +12,7 @@ databases:
   - name: codearena-db
     databaseName: codearena
     user: codearena
-    plan: free          # TODO(verify): Render free Postgres instances expire after ~30 days — check current terms before relying on it.
+    plan: free          # verified: free Postgres (0.1 CPU, 256 MB) — expires after ~30 days per Render free tier terms
     region: frankfurt
 
 services:
@@ -23,7 +23,7 @@ services:
     dockerContext: ./backend
     branch: main
     region: frankfurt
-    plan: free          # TODO(verify): free web services spin down when idle (slow first request after idle) — prefer 0.5c-512mb for the pilot.
+    plan: free          # verified: free web service (0.1 CPU, 512 MB) spins down when idle — accept for beta pilot
     healthCheckPath: /health/
     envVars:
       - key: ROLE
@@ -84,7 +84,7 @@ services:
     dockerContext: ./backend
     branch: main
     region: frankfurt
-    plan: free          # TODO(verify): 0.1 CPU may make JVM/g++ compiles exceed the 15 s compile limit — prefer 0.5c-512mb if Java/C++ matter for the beta.
+    plan: 0.5c-512mb      # worker has no free tier; 0.5c-512mb is the minimum paid plan
     envVars:
       - key: ROLE
         value: worker
