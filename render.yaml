@@ -1,0 +1,122 @@
+# CodeArena public beta — Render Blueprint (backend: web + worker + Key Value).
+# Spec: https://render.com/docs/blueprint-spec
+#
+# Frontend lives on Vercel (frontend/): vercel.json proxies /api/* to
+# codearena-api — replace REPLACE_ME_RENDER_HOST there after the first deploy.
+# WebSockets bypass Vercel: set VITE_WS_URL=wss://<codearena-api host>.
+#
+# The judge runs user code with a stripped environment and POSIX rlimits —
+# risk reduction, NOT real isolation (see backend/apps/submissions/runner.py).
+#
+# Database: external Neon Postgres (SSL required). Provide POSTGRES_HOST/PORT/DB/USER/PASSWORD
+# and POSTGRES_SSLMODE=require as sync:false values during Blueprint creation.
+
+services:
+  - type: web
+    name: codearena-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    branch: main
+    region: frankfurt
+    plan: free          # verified: free web service (0.1 CPU, 512 MB) spins down when idle — accept for beta pilot
+    healthCheckPath: /health/
+    envVars:
+      - key: ROLE
+        value: web
+      - key: DEBUG
+        value: 'False'
+      - key: SECURE_HSTS_SECONDS
+        value: '0'
+      # Render's internal health check connects over plain HTTP; if it does not
+      # send X-Forwarded-Proto: https (TODO(verify)), the production default
+      # SECURE_SSL_REDIRECT=True would 301 /health/ and fail the deploy. TLS is
+      # terminated at the edge (Render LB / Vercel), so the Django-level
+      # redirect is redundant for the beta.
+      - key: SECURE_SSL_REDIRECT
+        value: 'False'
+      # Identical secrets on web and worker: generated once in the shared
+      # group, injected into both services via fromGroup.
+      - fromGroup: codearena-shared-secrets
+      # Neon Postgres credentials (manual entry — sync:false). Use direct (non-pooled)
+      # connection string host, port 5432. sslmode=require is mandatory for Neon.
+      - key: POSTGRES_HOST
+        sync: false     # Neon hostname (e.g. ep-xxx.eu-central-1.aws.neon.tech)
+      - key: POSTGRES_PORT
+        sync: false     # 5432
+      - key: POSTGRES_USER
+        sync: false
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_DB
+        sync: false
+      - key: POSTGRES_SSLMODE
+        value: require
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: codearena-redis
+          property: connectionString
+      # Required at Django settings import (no default in backend settings).
+      - key: ALLOWED_HOSTS
+        sync: false     # e.g. the codearena-api.onrender.com host (no scheme)
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false     # e.g. https://<vercel-app>.vercel.app
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false     # e.g. https://<vercel-app>.vercel.app
+
+  - type: worker
+    name: codearena-worker
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    branch: main
+    region: frankfurt
+    plan: 0.5c-512mb      # worker has no free tier; 0.5c-512mb is the minimum paid plan
+    envVars:
+      - key: ROLE
+        value: worker
+      - key: DEBUG
+        value: 'False'
+      - key: SECURE_HSTS_SECONDS
+        value: '0'
+      - fromGroup: codearena-shared-secrets
+      # Must match the codearena-api values (same database, same secrets).
+      - key: POSTGRES_HOST
+        sync: false     # same as codearena-api
+      - key: POSTGRES_PORT
+        sync: false     # same as codearena-api
+      - key: POSTGRES_USER
+        sync: false
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_DB
+        sync: false
+      - key: POSTGRES_SSLMODE
+        value: require
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: codearena-redis
+          property: connectionString
+      # Django settings import requires ALLOWED_HOSTS on the worker too.
+      - key: ALLOWED_HOSTS
+        sync: false     # same value as codearena-api
+
+  - type: keyvalue
+    name: codearena-redis
+    region: frankfurt
+    plan: free
+    ipAllowList: []     # internal connections only
+    # Celery broker + Channels: never silently evict queued tasks/messages.
+    maxmemoryPolicy: noeviction
+
+envVarGroups:
+  - name: codearena-shared-secrets
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
