@@ -6,6 +6,13 @@ import time
 from celery import shared_task
 from celery.exceptions import MaxRetriesExceededError
 from celery.utils.log import get_task_logger
+from django.conf import settings
+
+from apps.submissions.runner import (
+    build_judge_env,
+    judge_limit_profile,
+    run_judge_subprocess,
+)
 
 logger = get_task_logger(__name__)
 
@@ -23,9 +30,14 @@ LANG_CONFIG = {
     'java': {
         'ext': '.java',
         'compile': ['javac', '{file}'],
-        'run': ['java', '-cp', '{dir}', 'Main'],
+        # -Xmx caps the JVM heap: RLIMIT_AS/RLIMIT_NPROC are deliberately NOT
+        # applied to java (the JVM reserves a large address space and spawns
+        # many threads, so tight rlimits break it) — see judge_limit_profile().
+        'run': ['java', '-Xmx{java_xmx}', '-cp', '{dir}', 'Main'],
     },
 }
+
+COMPILE_TIMEOUT_S = 15
 
 
 def _get_test_cases(problem) -> list[dict[str, str]]:
@@ -47,8 +59,11 @@ def run_judge(sub) -> tuple[str, int, int]:
 
     time_limit_ms = problem.time_ms
     time_limit_s = time_limit_ms / 1000.0
+    java_xmx = str(getattr(settings, 'JUDGE_JAVA_XMX', '256m'))
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        judge_env = build_judge_env(tmpdir)
+
         if lang == 'java':
             src_path = os.path.join(tmpdir, 'Main' + cfg['ext'])
         else:
@@ -64,13 +79,18 @@ def run_judge(sub) -> tuple[str, int, int]:
                 part.format(file=src_path, exe=exe_path, dir=tmpdir)
                 for part in cfg['compile']
             ]
-            result = subprocess.run(
+            returncode, _out, _err, timed_out = run_judge_subprocess(
                 compile_cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
+                cwd=tmpdir,
+                env=judge_env,
+                wall_timeout_s=COMPILE_TIMEOUT_S,
+                limits=judge_limit_profile(lang, 'compile', COMPILE_TIMEOUT_S),
             )
-            if result.returncode != 0:
+            if timed_out:
+                # Preserved pre-hardening semantics: a hung compile is an
+                # infrastructure failure (task retry), not a compile error.
+                raise subprocess.TimeoutExpired(compile_cmd, COMPILE_TIMEOUT_S)
+            if returncode != 0:
                 return 'CE', 0, 0
 
         max_time_ms = 0
@@ -78,19 +98,19 @@ def run_judge(sub) -> tuple[str, int, int]:
 
         for test_case in test_cases:
             run_cmd = [
-                part.format(file=src_path, exe=exe_path, dir=tmpdir)
+                part.format(file=src_path, exe=exe_path, dir=tmpdir, java_xmx=java_xmx)
                 for part in cfg['run']
             ]
             start = time.perf_counter()
-            try:
-                proc = subprocess.run(
-                    run_cmd,
-                    input=test_case['input'],
-                    capture_output=True,
-                    text=True,
-                    timeout=time_limit_s + 1,
-                )
-            except subprocess.TimeoutExpired:
+            returncode, out_bytes, _err, timed_out = run_judge_subprocess(
+                run_cmd,
+                cwd=tmpdir,
+                env=judge_env,
+                wall_timeout_s=time_limit_s + 1,
+                limits=judge_limit_profile(lang, 'run', time_limit_s + 1),
+                stdin_text=test_case['input'],
+            )
+            if timed_out:
                 return 'TLE', int(time_limit_s * 1000), max_memory_kb
 
             elapsed_ms = int((time.perf_counter() - start) * 1000)
@@ -99,10 +119,10 @@ def run_judge(sub) -> tuple[str, int, int]:
             if elapsed_ms > time_limit_ms:
                 return 'TLE', elapsed_ms, max_memory_kb
 
-            if proc.returncode != 0:
+            if returncode != 0:
                 return 'RE', elapsed_ms, max_memory_kb
 
-            got = proc.stdout.strip()
+            got = out_bytes.decode('utf-8').strip()
             expected = test_case['expected_output'].strip()
             if got != expected:
                 return 'WA', elapsed_ms, max_memory_kb
