@@ -271,3 +271,74 @@ Target: static frontend on Vercel (root dir `frontend`), backend on Render, **Po
 - **Neon free tier** auto-suspends after 5 min idle (cannot be disabled); next request waits for wake-up (~1–2 s).
 - **Worker plan** `0.5c-512mb` (paid, ~$7/mo) is the minimum for background workers on Render.
 - **Neon free tier** includes 100 CU-hours/month and 0.5–1 GB storage (check Neon pricing page for exact quota). DatabaseScheduler removed from worker to avoid 24/7 polling that would burn free hours.
+
+## 14. Free, no card: manual Render setup (single web service, no Blueprint)
+
+Use this path when you want zero-cost deployment without a credit card. One Render **Web Service (Free)** runs both Django (Daphne) and Celery in the same container via `ROLE=all`. No separate worker, no Blueprint, no paid plan.
+
+### Prerequisites
+
+- GitHub repo `nurkhan0/Olympyad-lab-` (private, Render GitHub App installed)
+- Neon Postgres project (direct connection, not pooled)
+- Render Key Value (free tier, internal URL)
+
+### Step-by-step
+
+1. **Render Key Value (free)**
+   - Dashboard → New → Key Value → Name `codearena-redis` → Region `Frankfurt` → Plan `Free` → IP Allow List: empty (internal only) → Create.
+   - Copy **Internal Connection URL** (looks like `redis://user:pass@host:port/db`). This is `REDIS_URL`.
+
+2. **New Web Service (Docker, Free)**
+   - Dashboard → New → Web Service → Connect repo `nurkhan0/Olympyad-lab-` → Branch `main`.
+   - Runtime: **Docker** → Root Directory: `backend` → Dockerfile Path: `./Dockerfile`.
+   - Instance Type: **Free** (0.1 CPU, 512 MB).
+   - Health Check Path: `/health/`.
+   - Click **Advanced** → add all env vars below.
+
+3. **Environment variables (enter exactly as shown)**
+
+| Variable | Value / Source |
+|---|---|
+| `SECRET_KEY` | 50+ random chars: `python -c "import secrets; print(secrets.token_urlsafe(48))"` |
+| `JWT_ACCESS_SECRET` | 50+ random chars (same command) |
+| `JWT_REFRESH_SECRET` | 50+ random chars (same command) |
+| `DEBUG` | `False` |
+| `ALLOWED_HOSTS` | `<service-name>.onrender.com` (shown in dashboard after create) |
+| `POSTGRES_HOST` | Neon direct host (e.g. `ep-xxx.eu-central-1.aws.neon.tech`) |
+| `POSTGRES_PORT` | `5432` |
+| `POSTGRES_DB` | `neondb` |
+| `POSTGRES_USER` | `neondb_owner` |
+| `POSTGRES_PASSWORD` | Neon password (reset in Neon Console → Roles) |
+| `POSTGRES_SSLMODE` | `require` |
+| `REDIS_URL` | Internal URL from Render Key Value (step 1) |
+| `CORS_ALLOWED_ORIGINS` | `https://<vercel-app>.vercel.app` (update after Vercel deploy) |
+| `CSRF_TRUSTED_ORIGINS` | `https://<vercel-app>.vercel.app` (update after Vercel deploy) |
+| `ROLE` | `all` |
+| `SECURE_HSTS_SECONDS` | `0` |
+
+   - `SECURE_SSL_REDIRECT` is NOT set (defaults to `False` in settings) because Render health check comes over plain HTTP.
+   - `POSTGRES_SSLMODE=require` is mandatory for Neon.
+   - Secrets (`SECRET_KEY`, `JWT_*`) are **not generated** by Render here — you must generate and paste them.
+
+4. **Deploy** → wait for build + first deploy. Logs must show:
+   ```
+   [entrypoint] DB ready.
+   [entrypoint] Running migrations...
+   ...
+   [entrypoint] Starting Celery worker (queues: default,judge,contests) in background...
+   [entrypoint] Starting Daphne (HTTP + WebSocket) on port 8000...
+   ```
+
+5. **Vercel** (same as §13):
+   - Import repo → Root Directory `frontend` → Framework Vite.
+   - Build env: `VITE_WS_URL=wss://<render-host>`, `VITE_API_BASE_URL` empty.
+   - After deploy, copy Vercel URL → back to Render → update `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` → Manual Deploy.
+
+### Known limits (free, single-container)
+
+- **Render Free web service** spins down after 15 min idle; first request wakes it (~1 min), WebSocket drops → client falls back to polling.
+- **Neon free tier** auto-suspends after 5 min idle (cannot disable); wake-up ~1–2 s.
+- **Java memory**: default `JUDGE_JAVA_XMX=128m` (set in `runner.py`). 512 MB container leaves ~384 MB for OS + Python + Celery + JVM overhead. Large Java submissions may OOM; increase only if you upgrade the instance.
+- **No Celery Beat**: `ROLE=all` starts worker **without** `-B` (beat). Periodic task `cleanup-stuck-submissions` (every 5 min in `CELERY_BEAT_SCHEDULE`) will NOT run. If you need it, add a separate paid worker or use a cron job that hits an API endpoint.
+- **Single point of failure**: if Celery or Daphne crashes, the container restarts (Render policy). Both processes are monitored; one exiting kills the other.
+- **No horizontal scaling**: Free tier = 1 instance only.
