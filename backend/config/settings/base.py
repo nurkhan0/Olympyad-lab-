@@ -63,7 +63,7 @@ DATABASES = {
         'HOST': config('POSTGRES_HOST', default='postgres'),
         'PORT': config('POSTGRES_PORT', default='5432'),
         'CONN_MAX_AGE': 60,
-        'OPTIONS': {'connect_timeout': 10},
+        'OPTIONS': {'connect_timeout': 10, 'sslmode': config('POSTGRES_SSLMODE', default='prefer')},
     }
 }
 
