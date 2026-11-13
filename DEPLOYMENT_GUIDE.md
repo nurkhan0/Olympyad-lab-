@@ -234,55 +234,40 @@ Verified 2026-11-12 against the HTTPS stack:
 - **External DNS / real domain** — required for certbot issuance.
 - Persistent off-host backups (the `backups/` volume is host-local).
 
-## 13. Beta: Render + Vercel (configured in `render.yaml`, NOT yet deployed)
+## 13. Beta: Render + Vercel + Neon (configured in `render.yaml`, NOT yet deployed)
 
-Target: static frontend on Vercel (root dir `frontend`), backend on Render.
+Target: static frontend on Vercel (root dir `frontend`), backend on Render, **PostgreSQL on Neon**.
 
 ### Order of steps
 
-1. Merge `beta-deploy` into `main`, connect the GitHub repo in Render, choose
-   **New → Blueprint**. Render reads `render.yaml` and creates `codearena-api`
-   (web, daphne), `codearena-worker` (Celery worker + embedded beat),
-   `codearena-db` (Postgres, frankfurt), `codearena-redis` (Key Value,
-   internal-only) and the shared secret group (`SECRET_KEY`, `JWT_ACCESS_SECRET`,
-   `JWT_REFRESH_SECRET` generated once — identical on web and worker).
-2. Fill the `sync: false` prompts during creation (on both services where
-    shown): `ALLOWED_HOSTS` — the `codearena-api.onrender.com` host; `CORS_ALLOWED_ORIGINS`
-    / `CSRF_TRUSTED_ORIGINS` — the Vercel origin (`https://…`).
-    `POSTGRES_HOST` and `POSTGRES_PORT` are now auto-populated via `fromDatabase`
-    in `render.yaml` (no manual entry needed).
-3. Wait for the first deploys; `migrate` + `collectstatic` run in the web
-   entrypoint (`ROLE=web`). Verify `https://<render-host>/health/` returns 200
-   (503 until DB/Redis are reachable — the check covers both).
-4. Vercel: import the repo, set **Root Directory = `frontend`**, keep the
-   detected build. Build-time env vars:
-   - `VITE_API_BASE_URL` — leave **empty** (axios/session then use the relative
-     `/api/v1`; the refresh cookie stays same-origin through the Vercel rewrite);
-   - `VITE_WS_URL` — `wss://<render-host>` (**required**: Vercel cannot proxy
-     WebSockets, so `/ws/submissions/…` connects straight to Render).
-5. Edit `frontend/vercel.json`: replace `REPLACE_ME_RENDER_HOST` with the Render
-   host (e.g. `codearena-api.onrender.com`) and redeploy. Until then every
-   `/api/*` request fails on Vercel.
-6. Smoke test: register → submit hello-world (Python; Java/C++ need enough
-   worker CPU — free `0.1 CPU` may exceed the 15 s compile limit) → verdict
-   arrives via WebSocket or the polling fallback.
+1. **Neon**: create a project, choose region near Render (Frankfurt → AWS `eu-central-1`). Copy the **direct** (non-pooled) connection parameters: host (e.g. `ep-xxx.eu-central-1.aws.neon.tech`), port 5432, database, user, password. Neon requires `sslmode=require`.
+2. Merge `beta-deploy` into `main`, connect the GitHub repo in Render, choose **New → Blueprint**. Render reads `render.yaml` and creates `codearena-api` (web, daphne), `codearena-worker` (Celery worker + embedded beat), `codearena-redis` (Key Value, internal-only) and the shared secret group (`SECRET_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` generated once — identical on web and worker). **No Render Postgres is provisioned.**
+3. Fill the `sync: false` prompts during creation (on both services where shown):
+   - `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD` — from Neon direct connection.
+   - `POSTGRES_SSLMODE` is set to `require` in `render.yaml` (not a prompt).
+   - `ALLOWED_HOSTS` — the `codearena-api.onrender.com` host.
+   - `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` — the Vercel origin (`https://…`).
+4. Wait for the first deploys; `migrate` + `collectstatic` run in the web entrypoint (`ROLE=web`). Verify `https://<render-host>/health/` returns 200 (503 until DB/Redis are reachable — the check covers both).
+5. Vercel: import the repo, set **Root Directory = `frontend`**, keep the detected build. Build-time env vars:
+   - `VITE_API_BASE_URL` — leave **empty** (axios/session then use the relative `/api/v1`; the refresh cookie stays same-origin through the Vercel rewrite);
+   - `VITE_WS_URL` — `wss://<render-host>` (**required**: Vercel cannot proxy WebSockets, so `/ws/submissions/…` connects straight to Render).
+6. Edit `frontend/vercel.json`: replace `REPLACE_ME_RENDER_HOST` with the Render host (e.g. `codearena-api.onrender.com`) and redeploy. Until then every `/api/*` request fails on Vercel.
+7. Smoke test: register → submit hello-world (Python; Java/C++ need enough worker CPU — `0.5c-512mb` worker plan is the minimum paid tier) → verdict arrives via WebSocket or the polling fallback.
 
 ### Which env var goes where (summary)
 
 | Where | Variables |
 |---|---|
 | Render, shared env group (web + worker) | `SECRET_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (generated) |
-| Render, web + worker | `POSTGRES_USER/PASSWORD/DB` (auto), `REDIS_URL` (auto), `DEBUG=False`, `SECURE_HSTS_SECONDS=0`, `POSTGRES_HOST/PORT` (auto via fromDatabase), `ALLOWED_HOSTS` (manual) |
+| Render, web + worker | `POSTGRES_HOST/PORT/DB/USER/PASSWORD` (manual from Neon), `POSTGRES_SSLMODE=require` (auto), `REDIS_URL` (auto), `DEBUG=False`, `SECURE_HSTS_SECONDS=0`, `ALLOWED_HOSTS` (manual) |
 | Render, web only | `ROLE=web`, `SECURE_SSL_REDIRECT=False` (health check comes over plain HTTP), `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` |
 | Render, worker only | `ROLE=worker` |
 | Vercel build | `VITE_API_BASE_URL` (empty), `VITE_WS_URL=wss://<render-host>` |
 
 ### Known limitations
 
-- **Judge isolation is reduced, not real**: user code runs with a stripped
-  environment and POSIX rlimits (`backend/apps/submissions/runner.py`) but
-  still with the worker user's filesystem and network access. Do not accept
-  hostile tenants on the beta.
-- Free Render plans: the web service spins down when idle; free Postgres
-  expires (~30 days); worker `0.1 CPU` is marginal for JVM compiles — see the
-  `TODO(verify)` notes in `render.yaml`.
+- **Judge isolation is reduced, not real**: user code runs with a stripped environment and POSIX rlimits (`backend/apps/submissions/runner.py`) but still with the worker user's filesystem and network access. Do not accept hostile tenants on the beta.
+- **Free Render web service** spins down after 15 min idle; first request after wake takes ~1 min and drops the WebSocket connection.
+- **Neon free tier** auto-suspends after 5 min idle (cannot be disabled); next request waits for wake-up (~1–2 s).
+- **Worker plan** `0.5c-512mb` (paid, ~$7/mo) is the minimum for background workers on Render.
+- **Neon free tier** includes 100 CU-hours/month and 0.5–1 GB storage (check Neon pricing page for exact quota). DatabaseScheduler removed from worker to avoid 24/7 polling that would burn free hours.
