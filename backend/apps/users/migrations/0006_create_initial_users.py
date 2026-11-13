@@ -5,20 +5,21 @@ from django.db import migrations
 def create_initial_users(apps, schema_editor):
     CustomUser = apps.get_model('users', 'CustomUser')
     db_alias = schema_editor.connection.alias
+    mgr = CustomUser.objects.db_manager(db_alias)
 
     # Skip if users already exist (idempotent)
-    if CustomUser.objects.using(db_alias).filter(email='admin@example.com').exists():
+    if mgr.filter(email='admin@example.com').exists():
         return
 
     # Admin
-    CustomUser.objects.using(db_alias).create_superuser(
+    mgr.create_superuser(
         email='admin@example.com',
         handle='admin',
         password='admin123',
     )
 
     # Teacher
-    CustomUser.objects.using(db_alias).create_user(
+    mgr.create_user(
         email='teacher@example.com',
         handle='teacher',
         password='teacher123',
@@ -27,7 +28,7 @@ def create_initial_users(apps, schema_editor):
     )
 
     # Student
-    CustomUser.objects.using(db_alias).create_user(
+    mgr.create_user(
         email='student@example.com',
         handle='student',
         password='student123',
