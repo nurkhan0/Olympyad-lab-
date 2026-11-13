@@ -247,10 +247,10 @@ Target: static frontend on Vercel (root dir `frontend`), backend on Render.
    internal-only) and the shared secret group (`SECRET_KEY`, `JWT_ACCESS_SECRET`,
    `JWT_REFRESH_SECRET` generated once — identical on web and worker).
 2. Fill the `sync: false` prompts during creation (on both services where
-   shown): `POSTGRES_HOST` / `POSTGRES_PORT` — from the `codearena-db` "Info"
-   page (the Blueprint spec cannot reference host/port from a database);
-   `ALLOWED_HOSTS` — the `codearena-api.onrender.com` host; `CORS_ALLOWED_ORIGINS`
-   / `CSRF_TRUSTED_ORIGINS` — the Vercel origin (`https://…`).
+    shown): `ALLOWED_HOSTS` — the `codearena-api.onrender.com` host; `CORS_ALLOWED_ORIGINS`
+    / `CSRF_TRUSTED_ORIGINS` — the Vercel origin (`https://…`).
+    `POSTGRES_HOST` and `POSTGRES_PORT` are now auto-populated via `fromDatabase`
+    in `render.yaml` (no manual entry needed).
 3. Wait for the first deploys; `migrate` + `collectstatic` run in the web
    entrypoint (`ROLE=web`). Verify `https://<render-host>/health/` returns 200
    (503 until DB/Redis are reachable — the check covers both).
@@ -272,7 +272,7 @@ Target: static frontend on Vercel (root dir `frontend`), backend on Render.
 | Where | Variables |
 |---|---|
 | Render, shared env group (web + worker) | `SECRET_KEY`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (generated) |
-| Render, web + worker | `POSTGRES_USER/PASSWORD/DB` (auto), `REDIS_URL` (auto), `DEBUG=False`, `SECURE_HSTS_SECONDS=0`, `POSTGRES_HOST/PORT` + `ALLOWED_HOSTS` (manual) |
+| Render, web + worker | `POSTGRES_USER/PASSWORD/DB` (auto), `REDIS_URL` (auto), `DEBUG=False`, `SECURE_HSTS_SECONDS=0`, `POSTGRES_HOST/PORT` (auto via fromDatabase), `ALLOWED_HOSTS` (manual) |
 | Render, web only | `ROLE=web`, `SECURE_SSL_REDIRECT=False` (health check comes over plain HTTP), `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` |
 | Render, worker only | `ROLE=worker` |
 | Vercel build | `VITE_API_BASE_URL` (empty), `VITE_WS_URL=wss://<render-host>` |

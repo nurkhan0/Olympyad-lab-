@@ -42,13 +42,16 @@ services:
       # Identical secrets on web and worker: generated once in the shared
       # group, injected into both services via fromGroup.
       - fromGroup: codearena-shared-secrets
-      # fromDatabase supports only connectionString/connectionPoolString/user/
-      # password/database — HOST and PORT are NOT referenceable, so they are
-      # filled in the dashboard from the codearena-db "Info" page.
+      # fromDatabase supports host, port, user, password, database,
+      # connectionString, connectionPoolString — use host/port for direct access.
       - key: POSTGRES_HOST
-        sync: false     # TODO(verify): internal hostname shown on the codearena-db dashboard
+        fromDatabase:
+          name: codearena-db
+          property: host
       - key: POSTGRES_PORT
-        sync: false     # TODO(verify): internal Postgres port (5432) shown on the dashboard
+        fromDatabase:
+          name: codearena-db
+          property: port
       - key: POSTGRES_USER
         fromDatabase:
           name: codearena-db
@@ -92,9 +95,13 @@ services:
       - fromGroup: codearena-shared-secrets
       # Must match the codearena-api values (same database, same secrets).
       - key: POSTGRES_HOST
-        sync: false     # same as codearena-api
+        fromDatabase:
+          name: codearena-db
+          property: host
       - key: POSTGRES_PORT
-        sync: false     # same as codearena-api
+        fromDatabase:
+          name: codearena-db
+          property: port
       - key: POSTGRES_USER
         fromDatabase:
           name: codearena-db
