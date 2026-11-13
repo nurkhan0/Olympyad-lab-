@@ -67,7 +67,15 @@ DATABASES = {
     }
 }
 
-REDIS_URL = os.environ.get('REDIS_URL', config('REDIS_URL', default='redis://localhost:6379/0'))
+# Redis URL — required in production; localhost default only for local dev.
+# In production (DEBUG=False), this MUST be set via environment variable.
+_redis_url = os.environ.get('REDIS_URL') or config('REDIS_URL', default=None)
+if not DEBUG and not _redis_url:
+    raise RuntimeError(
+        'REDIS_URL must be set in production (DEBUG=False). '
+        'Provide it via environment variable.'
+    )
+REDIS_URL = _redis_url or 'redis://localhost:6379/0'
 
 CACHES = {
     'default': {
