@@ -1,4 +1,4 @@
-# CodeArena public beta — Render Blueprint (backend: web + worker + Postgres + Key Value).
+# CodeArena public beta — Render Blueprint (backend: web + worker + Key Value).
 # Spec: https://render.com/docs/blueprint-spec
 #
 # Frontend lives on Vercel (frontend/): vercel.json proxies /api/* to
@@ -7,13 +7,9 @@
 #
 # The judge runs user code with a stripped environment and POSIX rlimits —
 # risk reduction, NOT real isolation (see backend/apps/submissions/runner.py).
-
-databases:
-  - name: codearena-db
-    databaseName: codearena
-    user: codearena
-    plan: free          # verified: free Postgres (0.1 CPU, 256 MB) — expires after ~30 days per Render free tier terms
-    region: frankfurt
+#
+# Database: external Neon Postgres (SSL required). Provide POSTGRES_HOST/PORT/DB/USER/PASSWORD
+# and POSTGRES_SSLMODE=require as sync:false values during Blueprint creation.
 
 services:
   - type: web
@@ -42,28 +38,20 @@ services:
       # Identical secrets on web and worker: generated once in the shared
       # group, injected into both services via fromGroup.
       - fromGroup: codearena-shared-secrets
-      # fromDatabase supports host, port, user, password, database,
-      # connectionString, connectionPoolString — use host/port for direct access.
+      # Neon Postgres credentials (manual entry — sync:false). Use direct (non-pooled)
+      # connection string host, port 5432. sslmode=require is mandatory for Neon.
       - key: POSTGRES_HOST
-        fromDatabase:
-          name: codearena-db
-          property: host
+        sync: false     # Neon hostname (e.g. ep-xxx.eu-central-1.aws.neon.tech)
       - key: POSTGRES_PORT
-        fromDatabase:
-          name: codearena-db
-          property: port
+        sync: false     # 5432
       - key: POSTGRES_USER
-        fromDatabase:
-          name: codearena-db
-          property: user
+        sync: false
       - key: POSTGRES_PASSWORD
-        fromDatabase:
-          name: codearena-db
-          property: password
+        sync: false
       - key: POSTGRES_DB
-        fromDatabase:
-          name: codearena-db
-          property: database
+        sync: false
+      - key: POSTGRES_SSLMODE
+        value: require
       - key: REDIS_URL
         fromService:
           type: keyvalue
@@ -95,25 +83,17 @@ services:
       - fromGroup: codearena-shared-secrets
       # Must match the codearena-api values (same database, same secrets).
       - key: POSTGRES_HOST
-        fromDatabase:
-          name: codearena-db
-          property: host
+        sync: false     # same as codearena-api
       - key: POSTGRES_PORT
-        fromDatabase:
-          name: codearena-db
-          property: port
+        sync: false     # same as codearena-api
       - key: POSTGRES_USER
-        fromDatabase:
-          name: codearena-db
-          property: user
+        sync: false
       - key: POSTGRES_PASSWORD
-        fromDatabase:
-          name: codearena-db
-          property: password
+        sync: false
       - key: POSTGRES_DB
-        fromDatabase:
-          name: codearena-db
-          property: database
+        sync: false
+      - key: POSTGRES_SSLMODE
+        value: require
       - key: REDIS_URL
         fromService:
           type: keyvalue
