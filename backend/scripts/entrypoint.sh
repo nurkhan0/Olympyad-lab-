@@ -22,7 +22,9 @@ elif [ "$ROLE" = "worker" ]; then
     echo "[entrypoint] Starting Celery worker (queues: default,judge,contests) with embedded beat..."
     # Migrations/collectstatic are NOT run here: the web service owns schema
     # and static files. Worker only waits for the DB to be reachable.
-    exec su -s /bin/bash appuser -c "exec celery -A config worker --loglevel=info --pool=solo --queues=default,judge,contests -B --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    # DatabaseScheduler removed: it polls the DB and would keep Neon awake 24/7.
+    # Static CELERY_BEAT_SCHEDULE in settings/base.py works with default scheduler (-B).
+    exec su -s /bin/bash appuser -c "exec celery -A config worker --loglevel=info --pool=solo --queues=default,judge,contests -B"
 else
     echo "[entrypoint] ERROR: unknown ROLE='$ROLE' (expected 'web' or 'worker')" >&2
     exit 1
