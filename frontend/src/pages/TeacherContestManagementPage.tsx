@@ -612,7 +612,7 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
   const [searchInput, setSearchInput] = useState('');
   const debouncedSearch = useDebounce(searchInput, 300);
   const [selected, setSelected] = useState<ManageableProblem | null>(null);
-  const [form, setForm] = useState<AddProblemDto>({ problem: '', label: '', order: 0, points: 100 });
+  const [form, setForm] = useState<AddProblemDto>({ problem: '', label: '', points: 100 });
   const [createForm, setCreateForm] = useState<CreateManageableProblemPayload>(EMPTY_CREATE_FORM);
   const [tagsInput, setTagsInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -668,7 +668,7 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
     setTagsInput('');
     // Label is re-filled by the effect once the refreshed list arrives, so the
     // just-added label is not offered twice.
-    setForm({ problem: '', label: '', order: problems.length, points: 100 });
+    setForm({ problem: '', label: '', points: 100 });
     setMode('pick');
     setSearchInput('');
   };
@@ -945,7 +945,7 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label className="block text-sm font-medium text-gray-700">Метка (A, B, C...) *</label>
               <input
@@ -955,17 +955,6 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
                 className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
                 required
                 maxLength={5}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700">Порядок *</label>
-              <input
-                type="number"
-                min={0}
-                value={form.order}
-                onChange={(e) => setForm({ ...form, order: Number(e.target.value) })}
-                className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
-                required
               />
             </div>
             <div>

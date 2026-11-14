@@ -118,6 +118,7 @@ export interface CreateContestDto {
 export interface AddProblemDto {
   problem: string;
   label: string;
-  order: number;
+  /** Omitted lets the API pick the next free slot. */
+  order?: number;
   points: number;
 }

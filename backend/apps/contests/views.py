@@ -1,4 +1,6 @@
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Min, Q, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -171,7 +173,13 @@ class ContestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], permission_classes=[IsTeacherOrAdmin])
     def add_problem(self, request, pk=None):
-        """Add a problem to this contest."""
+        """Add a problem to this contest.
+
+        `label` is capped at 5 chars and (contest, label) / (contest, order) are
+        unique. A client that guesses `order` from the current problem count can
+        collide with an existing row, so anything that would violate a
+        constraint comes back as a 400 with a readable message instead of a 500.
+        """
         contest = self.get_object()
         user = request.user
         if user.role != 'admin' and contest.created_by_id != user.pk:
@@ -184,14 +192,59 @@ class ContestViewSet(viewsets.ModelViewSet):
 
         try:
             problem = Problem.objects.get(pk=problem_id)
-        except Problem.DoesNotExist:
+        except (Problem.DoesNotExist, ValidationError, ValueError, TypeError):
             return Response({'error': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        contest_problem, created = ContestProblem.objects.get_or_create(
-            contest=contest,
-            problem=problem,
-            defaults={'label': label or problem.title[:5], 'order': order or 0, 'points': points},
-        )
+        if not label:
+            label = problem.title[:5]
+        label = str(label).strip()[:5]
+        if not label:
+            return Response({'error': 'Label is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        existing = ContestProblem.objects.filter(contest=contest)
+        if existing.filter(label=label).exists():
+            return Response(
+                {'error': f'Label "{label}" is already used in this contest.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if existing.filter(problem=problem).exists():
+            return Response(
+                {'error': 'Problem already in contest.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Fall back to the next free slot when the requested order is taken or
+        # was not supplied, so the UI can add several problems in a row.
+        requested_order = order
+        try:
+            requested_order = int(requested_order)
+        except (TypeError, ValueError):
+            requested_order = None
+
+        taken_orders = set(existing.values_list('order', flat=True))
+        if requested_order is None or requested_order in taken_orders:
+            requested_order = 0
+            while requested_order in taken_orders:
+                requested_order += 1
+
+        try:
+            with transaction.atomic():
+                contest_problem, created = ContestProblem.objects.get_or_create(
+                    contest=contest,
+                    problem=problem,
+                    defaults={
+                        'label': label,
+                        'order': requested_order,
+                        'points': points,
+                    },
+                )
+        except IntegrityError:
+            # Lost a race against a concurrent insert on label/order.
+            return Response(
+                {'error': 'Could not add the problem: label or order already taken.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not created:
             return Response(
                 {'error': 'Problem already in contest.'},

@@ -677,6 +677,86 @@ class TestContestProblemManagement:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) == 1
 
+    def test_add_problem_taken_order_does_not_500(self):
+        """A client guessing order from the problem count collides with an
+        existing row; the API must answer 4xx, never 500 (IntegrityError)."""
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        for index in range(2):
+            taken = ProblemFactory(status="published")
+            ContestProblem.objects.create(
+                contest=contest, problem=taken, label=chr(65 + index), order=index + 1, points=100
+            )
+        fresh = ProblemFactory(status="published")
+        client = auth_client(teacher)
+        url = reverse("contest-add-problem", kwargs={"pk": contest.pk})
+        # order=2 is already taken by the second existing problem.
+        response = client.post(
+            url,
+            {"problem": str(fresh.id), "label": "C", "order": 2, "points": 100},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["order"] not in (1, 2)
+
+    def test_add_problem_without_order_uses_next_free_slot(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        taken = ProblemFactory(status="published")
+        ContestProblem.objects.create(contest=contest, problem=taken, label="A", order=0, points=100)
+        fresh = ProblemFactory(status="published")
+        client = auth_client(teacher)
+        url = reverse("contest-add-problem", kwargs={"pk": contest.pk})
+        response = client.post(
+            url,
+            {"problem": str(fresh.id), "label": "B", "points": 100},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["order"] == 1
+
+    def test_add_problem_duplicate_label_rejected(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        taken = ProblemFactory(status="published")
+        ContestProblem.objects.create(contest=contest, problem=taken, label="A", order=0, points=100)
+        fresh = ProblemFactory(status="published")
+        client = auth_client(teacher)
+        url = reverse("contest-add-problem", kwargs={"pk": contest.pk})
+        response = client.post(
+            url,
+            {"problem": str(fresh.id), "label": "A", "points": 100},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_add_problem_overlong_label_rejected_not_500(self):
+        """label is max_length=5; a longer value is a 400, not a DataError 500."""
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        problem = ProblemFactory(status="published")
+        client = auth_client(teacher)
+        url = reverse("contest-add-problem", kwargs={"pk": contest.pk})
+        response = client.post(
+            url,
+            {"problem": str(problem.id), "label": "TOOLONG", "points": 100},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert len(response.data["label"]) == 5
+
+    def test_add_problem_invalid_problem_id_is_404(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        client = auth_client(teacher)
+        url = reverse("contest-add-problem", kwargs={"pk": contest.pk})
+        response = client.post(
+            url,
+            {"problem": "not-a-uuid", "label": "A", "points": 100},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     def test_add_problem_created_from_scratch(self):
         """UI flow: teacher creates a problem, then adds it by the returned id."""
         teacher = UserFactory(role="teacher")
