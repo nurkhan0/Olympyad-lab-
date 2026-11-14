@@ -8,7 +8,8 @@ from rest_framework.views import APIView
 from apps.users.authentication import BearerTokenAuthentication
 
 from ..filters import ProblemFilter
-from ..models import Problem, UserProblemStatus
+from ..models import UserProblemStatus
+from ..querysets import publicly_visible_problems
 from ..serializers import PublicProblemDetailSerializer, PublicProblemListSerializer
 
 
@@ -19,7 +20,7 @@ class PublicProblemPagination(PageNumberPagination):
 class ProblemListView(ListAPIView):
     permission_classes = [AllowAny]
     authentication_classes = [BearerTokenAuthentication]
-    queryset = Problem.objects.filter(status='published').prefetch_related('tags').distinct()
+    queryset = publicly_visible_problems().prefetch_related('tags').distinct()
     serializer_class = PublicProblemListSerializer
     filterset_class = ProblemFilter
     pagination_class = PublicProblemPagination
@@ -34,7 +35,10 @@ class ProblemDetailView(RetrieveAPIView):
     permission_classes = [AllowAny]
     authentication_classes = [BearerTokenAuthentication]
     lookup_field = 'slug'
-    queryset = Problem.objects.filter(status='published').prefetch_related('tags', 'test_cases')
+    # Contest-only problems are readable here only once every contest using them
+    # has ended; while a contest runs, participants use the contest-scoped
+    # statement endpoint instead.
+    queryset = publicly_visible_problems().prefetch_related('tags', 'test_cases')
     serializer_class = PublicProblemDetailSerializer
 
     def get_serializer_context(self):
@@ -48,7 +52,7 @@ class BookmarkProblemView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, slug):
-        problem = get_object_or_404(Problem, slug=slug, status='published')
+        problem = get_object_or_404(publicly_visible_problems(), slug=slug)
         ups, created = UserProblemStatus.objects.get_or_create(
             user=request.user,
             problem=problem,

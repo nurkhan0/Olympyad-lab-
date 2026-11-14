@@ -7,6 +7,7 @@ from datetime import timedelta
 
 from apps.users.factories import UserFactory, AdminUserFactory
 from apps.problems.factories import ProblemFactory
+from apps.problems.models import Problem
 from apps.submissions.factories import SubmissionFactory
 from apps.contests.models import Contest, ContestRegistration, ContestProblem
 
@@ -858,3 +859,202 @@ class TestContestSubmissionList:
         url = self.list_url(contest.pk)
         response = client.get(url)
         assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.django_db
+class TestContestOnlyProblemCreation:
+    """A problem composed inside a contest must work in the arena without ever
+    appearing in the public problem bank while the contest runs."""
+
+    def add_url(self, contest):
+        return reverse("contest-add-problem", kwargs={"pk": contest.pk})
+
+    def statement_url(self, contest, problem_id):
+        return reverse(
+            "contest-problem-statement", kwargs={"pk": contest.pk, "problem_id": problem_id}
+        )
+
+    def test_inline_create_makes_hidden_published_problem(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        client = auth_client(teacher)
+
+        response = client.post(
+            self.add_url(contest),
+            {
+                "title": "Private Task",
+                "statement": "Solve it silently.",
+                "difficulty": "medium",
+                "time_ms": 2000,
+                "memory_mb": 128,
+                "label": "A",
+                "points": 250,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        problem = ContestProblem.objects.get(contest=contest).problem
+        assert problem.title == "Private Task"
+        # Published so the judge accepts submissions, contest-only so it is not listed.
+        assert problem.status == "published"
+        assert problem.visibility == "contest"
+        assert problem.time_ms == 2000
+        assert problem.memory_mb == 128
+        assert problem.author_id == teacher.pk
+
+    def test_inline_created_problem_absent_from_public_list(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        client = auth_client(teacher)
+        client.post(
+            self.add_url(contest),
+            {"title": "Arena Only", "statement": "Hidden.", "label": "A", "points": 100},
+            format="json",
+        )
+
+        response = APIClient().get(reverse("problems-list"))
+        titles = [row["title"] for row in response.data["results"]]
+        assert "Arena Only" not in titles
+
+    def test_inline_create_rejects_missing_statement(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        response = auth_client(teacher).post(
+            self.add_url(contest), {"title": "No statement"}, format="json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not ContestProblem.objects.filter(contest=contest).exists()
+
+    def test_inline_create_rejects_both_problem_and_title(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        problem = ProblemFactory(status="published")
+        response = auth_client(teacher).post(
+            self.add_url(contest),
+            {"problem": str(problem.id), "title": "Clash", "statement": "Clash"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_inline_create_rejects_bad_difficulty_and_points(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        client = auth_client(teacher)
+
+        bad_difficulty = client.post(
+            self.add_url(contest),
+            {"title": "A", "statement": "B", "difficulty": "impossible", "label": "A"},
+            format="json",
+        )
+        assert bad_difficulty.status_code == status.HTTP_400_BAD_REQUEST
+
+        bad_points = client.post(
+            self.add_url(contest),
+            {"title": "C", "statement": "D", "label": "B", "points": "many"},
+            format="json",
+        )
+        assert bad_points.status_code == status.HTTP_400_BAD_REQUEST
+        assert not ContestProblem.objects.filter(contest=contest).exists()
+
+    def test_taken_label_leaves_no_orphan_problem(self):
+        """A rejected add must not create the problem it was going to attach."""
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        ContestProblem.objects.create(
+            contest=contest, problem=ProblemFactory(status="published"), label="A", order=0
+        )
+        response = auth_client(teacher).post(
+            self.add_url(contest),
+            {"title": "Orphan Risk", "statement": "x", "label": "A", "points": 10},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Problem.objects.filter(title="Orphan Risk").exists()
+
+    def test_student_cannot_create_inline_problem(self):
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        response = auth_client(UserFactory(role="student")).post(
+            self.add_url(contest),
+            {"title": "Sneaky", "statement": "x", "label": "A", "points": 1},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.django_db
+class TestContestProblemStatementAccess:
+    """The arena reads statements through a contest-scoped endpoint, because
+    contest-only problems are deliberately missing from /problems/."""
+
+    def url(self, contest, problem):
+        return reverse(
+            "contest-problem-statement", kwargs={"pk": contest.pk, "problem_id": problem.id}
+        )
+
+    def running_contest(self, teacher, problem):
+        contest = make_contest(
+            created_by=teacher,
+            start_time=timezone.now() - timedelta(minutes=10),
+            duration_minutes=120,
+        )
+        ContestProblem.objects.create(
+            contest=contest, problem=problem, label="A", order=0, points=100
+        )
+        return contest
+
+    def test_registered_student_gets_statement(self):
+        teacher = UserFactory(role="teacher")
+        problem = ProblemFactory(status="published", visibility="contest", statement="## Task\nBody")
+        contest = self.running_contest(teacher, problem)
+        student = UserFactory(role="student")
+        ContestRegistration.objects.create(contest=contest, user=student)
+
+        response = auth_client(student).get(self.url(contest, problem))
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["label"] == "A"
+        assert response.data["points"] == 100
+        assert "Body" in response.data["statement_html"]
+
+    def test_unregistered_student_denied(self):
+        teacher = UserFactory(role="teacher")
+        problem = ProblemFactory(status="published", visibility="contest")
+        contest = self.running_contest(teacher, problem)
+
+        response = auth_client(UserFactory(role="student")).get(self.url(contest, problem))
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_owner_teacher_allowed_without_registration(self):
+        teacher = UserFactory(role="teacher")
+        problem = ProblemFactory(status="published", visibility="contest")
+        contest = self.running_contest(teacher, problem)
+
+        response = auth_client(teacher).get(self.url(contest, problem))
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_statement_blocked_before_start(self):
+        teacher = UserFactory(role="teacher")
+        problem = ProblemFactory(status="published", visibility="contest")
+        contest = make_contest(created_by=teacher, start_time=timezone.now() + timedelta(hours=1))
+        ContestProblem.objects.create(contest=contest, problem=problem, label="A", order=0)
+
+        response = auth_client(teacher).get(self.url(contest, problem))
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_statement_404_for_problem_outside_contest(self):
+        teacher = UserFactory(role="teacher")
+        problem = ProblemFactory(status="published", visibility="contest")
+        other = ProblemFactory(status="published", visibility="contest")
+        contest = self.running_contest(teacher, problem)
+
+        response = auth_client(teacher).get(self.url(contest, other))
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_statement_requires_auth(self):
+        teacher = UserFactory(role="teacher")
+        problem = ProblemFactory(status="published", visibility="contest")
+        contest = self.running_contest(teacher, problem)
+
+        response = APIClient().get(self.url(contest, problem))
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED

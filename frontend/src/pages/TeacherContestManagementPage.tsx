@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
+import toast from 'react-hot-toast';
 
 import {
   listContests,
@@ -20,16 +21,37 @@ import {
   type CreateContestDto,
   type AddProblemDto,
 } from '../api/contestsApi';
-import { createManageableProblem, getManageableProblems } from '../api/problemsApi';
+import { getManageableProblems } from '../api/problemsApi';
 import DifficultyBadge from '../components/DifficultyBadge';
 import { formatDateTime } from '../utils/date';
 import FullPageSpinner from '../components/FullPageSpinner';
 import useDebounce from '../hooks/useDebounce';
 import { useAuthStore } from '../store/authStore';
-import type {
-  CreateManageableProblemPayload,
-  ManageableProblem,
-} from '../types/problem';
+import type { Difficulty, ManageableProblem } from '../types/problem';
+
+/**
+ * Inline problem composer. Submitted with the contest's add_problem endpoint,
+ * which creates the problem as contest-only instead of adding it to the public
+ * problem bank.
+ */
+type InlineCreateForm = {
+  title: string;
+  difficulty: Difficulty;
+  statement: string;
+  time_ms: number;
+  memory_mb: number;
+};
+
+/** A problem being composed in the create-contest form. */
+type ProblemDraft = InlineCreateForm & {
+  points: number;
+};
+
+/** A composed problem, attached to the contest once it exists. */
+type PendingProblem = ProblemDraft & {
+  key: string;
+  label: string;
+};
 
 const contestTypeLabels: Record<string, string> = {
   CF: 'Codeforces (CF)',
@@ -54,12 +76,39 @@ export default function TeacherContestManagementPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (dto: CreateContestDto) => createContest(dto),
-    onSuccess: () => {
+    // The contest is created first so problems can reference it, then every
+    // composed problem is attached. Problems are created contest-only, so a
+    // failure here never leaks a half-configured contest into the problem bank.
+    mutationFn: async ({ dto, problems }: { dto: CreateContestDto; problems: PendingProblem[] }) => {
+      const created = await createContest(dto);
+      const failed: string[] = [];
+      for (const [index, problem] of problems.entries()) {
+        try {
+          await addContestProblem(created.id, {
+            label: problem.label || String.fromCharCode(65 + index),
+            points: problem.points,
+            title: problem.title,
+            statement: problem.statement,
+            difficulty: problem.difficulty,
+            time_ms: problem.time_ms,
+            memory_mb: problem.memory_mb,
+          });
+        } catch (err: any) {
+          failed.push(problem.title || `задача ${index + 1}`);
+        }
+      }
+      return { contest: created, failed };
+    },
+    onSuccess: ({ failed }) => {
       queryClient.invalidateQueries({ queryKey: ['teacherContests'] });
       queryClient.invalidateQueries({ queryKey: ['contests'] });
       setShowCreateModal(false);
       setCreateError(null);
+      if (failed.length > 0) {
+        toast.error(`Контест создан, но не добавлены: ${failed.join(', ')}`);
+      } else {
+        toast.success('Контест создан');
+      }
     },
     onError: (err: any) => {
       setCreateError(err.response?.data?.detail || 'Ошибка создания');
@@ -194,7 +243,7 @@ export default function TeacherContestManagementPage() {
             }}
             onSubmit={editingContest
               ? (dto) => updateMutation.mutate({ id: editingContest.id, dto })
-              : createMutation.mutate}
+              : (dto, problems) => createMutation.mutate({ dto, problems })}
             isPending={editingContest ? updateMutation.isPending : createMutation.isPending}
             error={editingContest ? editError : createError}
           />
@@ -364,7 +413,7 @@ function ContestFormModal({
 }: {
   contest: ContestList | null;
   onClose: () => void;
-  onSubmit: (dto: CreateContestDto) => void;
+  onSubmit: (dto: CreateContestDto, problems: PendingProblem[]) => void;
   isPending: boolean;
   error: string | null;
 }) {
@@ -382,6 +431,38 @@ function ContestFormModal({
     is_rated: true,
     max_participants: undefined,
   });
+
+  // Problems composed while creating a contest. They are attached right after
+  // the contest row is created, and stay contest-only.
+  const [draft, setDraft] = useState<ProblemDraft>(EMPTY_DRAFT);
+  const [pendingProblems, setPendingProblems] = useState<PendingProblem[]>([]);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  const nextLabel = useMemo(() => {
+    const used = new Set(pendingProblems.map((problem) => problem.label));
+    for (let index = 0; index < 26; index += 1) {
+      const candidate = String.fromCharCode(65 + index);
+      if (!used.has(candidate)) return candidate;
+    }
+    return '';
+  }, [pendingProblems]);
+
+  const addDraftProblem = () => {
+    if (!draft.title.trim() || !draft.statement.trim()) {
+      setDraftError('Введите название и условие задачи');
+      return;
+    }
+    if (!nextLabel) {
+      setDraftError('Максимум 26 задач в контесте');
+      return;
+    }
+    setPendingProblems((prev) => [
+      ...prev,
+      { ...draft, key: `draft-${Date.now()}-${prev.length}`, label: nextLabel, points: 100 },
+    ]);
+    setDraft(EMPTY_DRAFT);
+    setDraftError(null);
+  };
 
   // Sync the form when editing an existing contest. Done in an effect (not
   // during render) so re-saving an edit preserves rules and is_published.
@@ -411,7 +492,7 @@ function ContestFormModal({
       registration_end: form.registration_end || undefined,
       max_participants: form.max_participants,
     };
-    onSubmit(dto);
+    onSubmit(dto, contest ? [] : pendingProblems);
   };
 
   return (
@@ -572,6 +653,129 @@ function ContestFormModal({
             </label>
           </div>
 
+          {!contest && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Задачи контеста</h3>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Можно создать сразу. Такие задачи видны только внутри контеста и не попадут
+                  в общий список задач, пока контест не закончится.
+                </p>
+              </div>
+
+              {draftError && <p className="text-xs text-red-600">{draftError}</p>}
+
+              {pendingProblems.length > 0 && (
+                <ul className="space-y-2">
+                  {pendingProblems.map((problem) => (
+                    <li
+                      key={problem.key}
+                      className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-900">
+                          <span className="mr-2 inline-flex h-5 w-5 items-center justify-center rounded bg-indigo-100 text-xs font-bold text-indigo-700">
+                            {problem.label}
+                          </span>
+                          {problem.title}
+                        </p>
+                        <p className="mt-0.5 text-xs text-gray-500">
+                          {problem.difficulty} · {problem.time_ms} мс · {problem.memory_mb} МБ ·{' '}
+                          {problem.points} баллов
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPendingProblems((prev) => prev.filter((item) => item.key !== problem.key))
+                        }
+                        className="shrink-0 text-xs text-red-600 hover:underline"
+                      >
+                        Удалить
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700">Название задачи</label>
+                  <input
+                    type="text"
+                    value={draft.title}
+                    onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700">Сложность</label>
+                  <select
+                    value={draft.difficulty}
+                    onChange={(e) => setDraft({ ...draft, difficulty: e.target.value as Difficulty })}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  >
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                    <option value="expert">Expert</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700">Баллы</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.points}
+                    onChange={(e) => setDraft({ ...draft, points: Number(e.target.value) })}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700">Лимит времени (мс)</label>
+                  <input
+                    type="number"
+                    min={100}
+                    max={10000}
+                    value={draft.time_ms}
+                    onChange={(e) => setDraft({ ...draft, time_ms: Number(e.target.value) })}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700">Память (МБ)</label>
+                  <input
+                    type="number"
+                    min={16}
+                    max={512}
+                    value={draft.memory_mb}
+                    onChange={(e) => setDraft({ ...draft, memory_mb: Number(e.target.value) })}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-gray-700">Условие (Markdown)</label>
+                  <textarea
+                    value={draft.statement}
+                    onChange={(e) => setDraft({ ...draft, statement: e.target.value })}
+                    rows={3}
+                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={addDraftProblem}
+                  className="rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                >
+                  + Добавить задачу в контест
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 flex justify-end gap-3">
             <button
               type="button"
@@ -594,13 +798,17 @@ function ContestFormModal({
   );
 }
 
-const EMPTY_CREATE_FORM: CreateManageableProblemPayload = {
+const EMPTY_CREATE_FORM: InlineCreateForm = {
   title: '',
   difficulty: 'easy',
   statement: '',
   time_ms: 1000,
   memory_mb: 256,
-  tags: [],
+};
+
+const EMPTY_DRAFT: ProblemDraft = {
+  ...EMPTY_CREATE_FORM,
+  points: 100,
 };
 
 function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: () => void }) {
@@ -613,12 +821,10 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
   const debouncedSearch = useDebounce(searchInput, 300);
   const [selected, setSelected] = useState<ManageableProblem | null>(null);
   const [form, setForm] = useState<AddProblemDto>({ problem: '', label: '', points: 100 });
-  const [createForm, setCreateForm] = useState<CreateManageableProblemPayload>(EMPTY_CREATE_FORM);
+  const [createForm, setCreateForm] = useState<InlineCreateForm>(EMPTY_CREATE_FORM);
   const [tagsInput, setTagsInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [created, setCreated] = useState<ManageableProblem | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
 
   const invalidateContestProblems = () =>
     Promise.all([
@@ -663,7 +869,6 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
 
   const resetForm = () => {
     setSelected(null);
-    setCreated(null);
     setCreateForm(EMPTY_CREATE_FORM);
     setTagsInput('');
     // Label is re-filled by the effect once the refreshed list arrives, so the
@@ -673,54 +878,49 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
     setSearchInput('');
   };
 
-  const handleCreate = async () => {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setError(null);
-    if (!createForm.title.trim()) {
-      setError('Введите название задачи');
-      return;
-    }
-    if (!createForm.statement.trim()) {
-      setError('Введите условие задачи');
+
+    if (!form.label.trim()) {
+      setError('Введите метку задачи');
       return;
     }
 
-    setIsCreating(true);
-    try {
-      const payload: CreateManageableProblemPayload = {
-        ...createForm,
+    // Pick mode addresses an existing problem; create mode composes a new one
+    // inline. Inline problems are created contest-only, so they never show up in
+    // the public problem bank while the tournament is running.
+    let payload: AddProblemDto;
+    if (mode === 'pick') {
+      if (!selected?.id) {
+        setError('Выберите задачу из списка');
+        return;
+      }
+      payload = { ...form, problem: selected.id };
+    } else {
+      if (!createForm.title.trim() || !createForm.statement.trim()) {
+        setError('Введите название и условие задачи');
+        return;
+      }
+      payload = {
+        ...form,
+        title: createForm.title.trim(),
+        statement: createForm.statement,
+        difficulty: createForm.difficulty,
+        time_ms: createForm.time_ms,
+        memory_mb: createForm.memory_mb,
         tags: tagsInput
           .split(',')
           .map((tag) => tag.trim())
           .filter(Boolean),
       };
-      const res = await createManageableProblem(payload);
-      const problem = res.data;
-      setCreated(problem);
-      setSelected(problem);
-      setMode('pick');
-      await queryClient.invalidateQueries({ queryKey: ['manageableProblems'] });
-    } catch (err: any) {
-      const data = err.response?.data;
-      setError(data?.detail || data?.title?.[0] || data?.statement?.[0] || 'Не удалось создать задачу');
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    const problemId = selected?.id;
-    if (!problemId) {
-      setError(mode === 'pick' ? 'Выберите задачу из списка' : 'Сначала создайте задачу');
-      return;
     }
 
     setIsSubmitting(true);
     try {
-      await addContestProblem(contest.id, { ...form, problem: problemId });
+      await addContestProblem(contest.id, payload);
       await invalidateContestProblems();
+      await queryClient.invalidateQueries({ queryKey: ['manageableProblems'] });
       resetForm();
     } catch (err: any) {
       setError(err.response?.data?.error || 'Ошибка добавления задачи');
@@ -864,7 +1064,7 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
                   <select
                     value={createForm.difficulty}
                     onChange={(e) =>
-                      setCreateForm({ ...createForm, difficulty: e.target.value as CreateManageableProblemPayload['difficulty'] })
+                      setCreateForm({ ...createForm, difficulty: e.target.value as Difficulty })
                     }
                     className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:ring-indigo-500"
                   >
@@ -919,29 +1119,11 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-gray-500">
-                  {isAdmin
-                    ? 'Задача создаётся как черновик. Опубликовать можно на странице редактирования.'
-                    : 'Учитель создаёт задачу как черновик — опубликует её администратор.'}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleCreate}
-                  disabled={isCreating}
-                  className="shrink-0 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                >
-                  {isCreating ? 'Создание…' : 'Создать задачу'}
-                </button>
+              <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">
+                Задача будет создана только для этого контеста: в общем списке задач она не
+                появится, пока контест не закончится. Тесты для проверки загружаются на
+                странице задач после создания.
               </div>
-              {created && (
-                <div className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">
-                  Задача «{created.title}» создана ({created.slug}). Заполните метку и добавьте её в контест.{' '}
-                  <Link to={testsHref(created.slug)} className="underline" onClick={onClose}>
-                    Загрузить тесты
-                  </Link>
-                </div>
-              )}
             </div>
           )}
 
@@ -972,14 +1154,24 @@ function ProblemsModal({ contest, onClose }: { contest: ContestList; onClose: ()
 
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-gray-500">
-              {selected ? `Выбрана: ${selected.title}` : 'Задача не выбрана'}
+              {mode === 'pick'
+                ? selected
+                  ? `Выбрана: ${selected.title}`
+                  : 'Задача не выбрана'
+                : 'Будет создана новая задача для этого контеста'}
             </p>
             <button
               type="submit"
               disabled={isSubmitting}
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              {isSubmitting ? 'Добавление…' : 'Добавить в контест'}
+              {isSubmitting
+                ? mode === 'pick'
+                  ? 'Добавление…'
+                  : 'Создание…'
+                : mode === 'pick'
+                  ? 'Добавить в контест'
+                  : 'Создать и добавить'}
             </button>
           </div>
         </form>

@@ -81,7 +81,7 @@ class ManageableProblemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Problem
         fields = (
-            'id', 'slug', 'title', 'difficulty', 'status', 'solver_count',
+            'id', 'slug', 'title', 'difficulty', 'status', 'visibility', 'solver_count',
             'tags', 'is_author', 'created_at',
         )
         read_only_fields = fields

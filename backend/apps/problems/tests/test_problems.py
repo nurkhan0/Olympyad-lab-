@@ -111,6 +111,106 @@ class TestPublicProblemList:
 
 
 @pytest.mark.django_db
+class TestContestOnlyVisibility:
+    """A problem written inside a contest stays out of the public problem bank
+    until every contest using it has finished."""
+
+    def make_contest(self, created_by, **kwargs):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.contests.models import Contest, ContestProblem
+
+        defaults = {
+            'title': 'Private Contest',
+            'contest_type': 'CF',
+            'start_time': timezone.now() - timedelta(minutes=30),
+            'duration_minutes': 120,
+            'is_public': True,
+            'is_published': True,
+            'created_by': created_by,
+        }
+        defaults.update(kwargs)
+        contest = Contest.objects.create(**defaults)
+        return contest, ContestProblem
+
+    def test_running_contest_problem_hidden_from_list(self):
+        teacher = UserFactory(role="teacher")
+        contest, ContestProblem = self.make_contest(teacher)
+        hidden = ProblemFactory(
+            status="published", visibility="contest", title="Hidden One", slug="hidden-one"
+        )
+        ProblemFactory(status="published", title="Visible One", slug="visible-one")
+        ContestProblem.objects.create(contest=contest, problem=hidden, label="A", order=0)
+
+        response = APIClient().get(reverse("problems-list"))
+        assert response.status_code == status.HTTP_200_OK
+        titles = [row["title"] for row in response.data["results"]]
+        assert hidden.title not in titles
+        assert "Visible One" in titles
+
+    def test_finished_contest_problem_becomes_public(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        teacher = UserFactory(role="teacher")
+        contest, ContestProblem = self.make_contest(
+            teacher,
+            start_time=timezone.now() - timedelta(hours=4),
+            duration_minutes=60,
+        )
+        released = ProblemFactory(
+            status="published", visibility="contest", title="Released One", slug="released-one"
+        )
+        ContestProblem.objects.create(contest=contest, problem=released, label="A", order=0)
+
+        response = APIClient().get(reverse("problems-list"))
+        assert response.status_code == status.HTTP_200_OK
+        titles = [row["title"] for row in response.data["results"]]
+        assert released.title in titles
+
+    def test_upcoming_contest_problem_hidden_from_list(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        teacher = UserFactory(role="teacher")
+        contest, ContestProblem = self.make_contest(
+            teacher, start_time=timezone.now() + timedelta(hours=2)
+        )
+        hidden = ProblemFactory(
+            status="published", visibility="contest", title="Soon Hidden", slug="soon-hidden"
+        )
+        ContestProblem.objects.create(contest=contest, problem=hidden, label="A", order=0)
+
+        response = APIClient().get(reverse("problems-list"))
+        titles = [row["title"] for row in response.data["results"]]
+        assert hidden.title not in titles
+
+    def test_running_contest_problem_hidden_from_detail(self):
+        teacher = UserFactory(role="teacher")
+        contest, ContestProblem = self.make_contest(teacher)
+        hidden = ProblemFactory(
+            status="published", visibility="contest", title="Hidden Detail", slug="hidden-detail"
+        )
+        ContestProblem.objects.create(contest=contest, problem=hidden, label="A", order=0)
+
+        response = APIClient().get(reverse("problems-detail", kwargs={"slug": hidden.slug}))
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_contest_only_problem_without_contest_is_public(self):
+        """Visibility only withholds a problem while a contest still runs."""
+        ProblemFactory(
+            status="published", visibility="contest", title="Orphan Private", slug="orphan-private"
+        )
+        response = APIClient().get(reverse("problems-list"))
+        titles = [row["title"] for row in response.data["results"]]
+        assert "Orphan Private" in titles
+
+
+@pytest.mark.django_db
 class TestPublicProblemDetail:
     def make_url(self, slug):
         return reverse("problems-detail", kwargs={"slug": slug})

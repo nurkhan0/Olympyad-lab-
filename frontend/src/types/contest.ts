@@ -9,6 +9,20 @@ export interface ContestProblem {
   points: number;
 }
 
+/** Statement payload served by /contests/<id>/problems/<problem_id>/statement/. */
+export interface ContestProblemStatement {
+  problem: string;
+  slug: string;
+  title: string;
+  difficulty: string;
+  label: string;
+  points: number;
+  time_ms: number;
+  memory_mb: number;
+  statement_html: string;
+  sample_test_cases: Array<{ input: string; expected_output: string }>;
+}
+
 export interface ContestList {
   id: number;
   title: string;
@@ -115,10 +129,22 @@ export interface CreateContestDto {
   max_participants?: number;
 }
 
+/**
+ * Adding a problem to a contest addresses it in one of two ways:
+ * `problem` (pick from the bank) or `title` + `statement` (compose inline).
+ * Inline problems are created contest-only, so they stay out of /problems/.
+ */
 export interface AddProblemDto {
-  problem: string;
+  problem?: string;
   label: string;
   /** Omitted lets the API pick the next free slot. */
   order?: number;
   points: number;
+  /** Inline creation only. */
+  title?: string;
+  statement?: string;
+  difficulty?: string;
+  time_ms?: number;
+  memory_mb?: number;
+  tags?: string[];
 }

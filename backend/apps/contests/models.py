@@ -29,6 +29,9 @@ class Contest(models.Model):
     is_public = models.BooleanField(default=True, db_index=True)
     is_published = models.BooleanField(default=False, db_index=True)
     is_rated = models.BooleanField(default=True)
+    # Denormalised from start_time + duration_minutes so the ORM can filter and
+    # order by it; kept in sync by Contest.save().
+    end_time = models.DateTimeField(editable=False, db_index=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
         related_name='created_contests',
@@ -38,8 +41,15 @@ class Contest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     @property
-    def end_time(self):
-        return self.start_time + timedelta(minutes=self.duration_minutes)
+    def participant_count(self):
+        return self.registrations.count()
+
+    def save(self, *args, **kwargs):
+        # Keep the denormalised end_time in step with start_time/duration_minutes
+        # (both are editable through the API).
+        if self.start_time and self.duration_minutes is not None:
+            self.end_time = self.start_time + timedelta(minutes=self.duration_minutes)
+        super().save(*args, **kwargs)
 
     @property
     def is_running(self):
@@ -57,10 +67,6 @@ class Contest(models.Model):
         if self.registration_end and now > self.registration_end:
             return False
         return True
-
-    @property
-    def participant_count(self):
-        return self.registrations.count()
 
     class Meta:
         indexes = [

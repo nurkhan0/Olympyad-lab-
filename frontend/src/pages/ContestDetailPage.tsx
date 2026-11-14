@@ -234,7 +234,14 @@ export default function ContestDetailPage() {
                     .map((cp) => (
                       <Link
                         key={cp.id}
-                        to={`/problems/${cp.problem_slug}`}
+                        // While the contest runs, problems are read inside the
+                        // arena: contest-only ones are deliberately not served
+                        // by the public /problems/<slug> page.
+                        to={
+                          contest.is_running
+                            ? `/contests/${contest.id}/active`
+                            : `/problems/${cp.problem_slug}`
+                        }
                         className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white p-4 hover:border-indigo-300 hover:bg-indigo-50 transition-colors"
                       >
                         <div className="flex items-center gap-3">

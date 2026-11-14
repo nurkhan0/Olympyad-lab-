@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 
 import {
   getContest,
+  getContestProblemStatement,
   listContestProblems,
   listContestRegistrations,
   type ContestProblem,
@@ -13,6 +14,7 @@ import {
 import { createSubmission } from '../api/submissionsApi';
 import CodeEditor, { DEFAULT_SNIPPETS, type EditorLanguage } from '../components/CodeEditor';
 import { useAuthStore } from '../store/authStore';
+import SampleTests from '../components/SampleTests';
 import SubmissionStatus from '../components/SubmissionStatus';
 
 function ContestActiveSkeleton() {
@@ -53,6 +55,19 @@ export default function ContestActivePage() {
     queryKey: ['contestProblems', contestId],
     queryFn: () => listContestProblems(contestId),
     enabled: !!contestId,
+  });
+
+  // Contest-only problems are deliberately absent from /problems/, so the arena
+  // reads each statement through the contest-scoped endpoint.
+  const {
+    data: statement,
+    isLoading: statementLoading,
+    error: statementError,
+  } = useQuery({
+    queryKey: ['contestProblemStatement', contestId, selectedProblem?.problem],
+    queryFn: () => getContestProblemStatement(contestId, selectedProblem!.problem),
+    enabled: !!contestId && !!selectedProblem,
+    retry: false,
   });
 
   // The registrations list endpoint is teacher/admin-only; per-user state
@@ -279,6 +294,37 @@ export default function ContestActivePage() {
                   </div>
                 </div>
                 <div className="p-4">
+                  <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                    {statementLoading ? (
+                      <p className="text-sm text-gray-500">Загрузка условия…</p>
+                    ) : statementError ? (
+                      <p className="text-sm text-red-600">Не удалось загрузить условие задачи.</p>
+                    ) : statement ? (
+                      <>
+                        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+                          <span>
+                            Лимит времени: <span className="font-medium">{statement.time_ms} мс</span>
+                          </span>
+                          <span>
+                            Память: <span className="font-medium">{statement.memory_mb} МБ</span>
+                          </span>
+                          <span>
+                            Баллы: <span className="font-medium">{statement.points}</span>
+                          </span>
+                        </div>
+                        <div
+                          className="prose prose-pre:bg-slate-900 prose-pre:text-slate-100 max-w-none"
+                          dangerouslySetInnerHTML={{ __html: statement.statement_html }}
+                        />
+                        {statement.sample_test_cases.length > 0 && (
+                          <div className="mt-4">
+                            <p className="mb-2 text-sm font-medium text-gray-700">Примеры</p>
+                            <SampleTests tests={statement.sample_test_cases} />
+                          </div>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
                   <CodeEditor
                     value={code}
                     onChange={setCode}

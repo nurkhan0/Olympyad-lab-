@@ -11,6 +11,7 @@ import type {
   CreateContestDto,
   AddProblemDto,
   ContestProblem,
+  ContestProblemStatement,
 } from '../types/contest';
 
 // Re-export types for convenience
@@ -26,6 +27,7 @@ export type {
   CreateContestDto,
   AddProblemDto,
   ContestProblem,
+  ContestProblemStatement,
 };
 
 // --- Contests ---
@@ -56,6 +58,11 @@ export const listContestProblems = (id: number) =>
 
 export const addContestProblem = (id: number, dto: AddProblemDto) =>
   api.post<ContestProblem>(`/contests/contests/${id}/add_problem/`, dto).then((res) => res.data);
+
+export const getContestProblemStatement = (id: number, problemId: string) =>
+  api
+    .get<ContestProblemStatement>(`/contests/contests/${id}/problems/${problemId}/statement/`)
+    .then((res) => res.data);
 
 export const removeContestProblem = (id: number, problemId: string) =>
   api.delete(`/contests/contests/${id}/remove_problem/`, {

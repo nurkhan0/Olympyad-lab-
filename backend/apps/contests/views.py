@@ -175,8 +175,16 @@ class ContestViewSet(viewsets.ModelViewSet):
     def add_problem(self, request, pk=None):
         """Add a problem to this contest.
 
-        `label` is capped at 5 chars and (contest, label) / (contest, order) are
-        unique. A client that guesses `order` from the current problem count can
+        Two ways to address the problem:
+
+        * ``problem`` — an existing problem id (picked from the problem bank).
+        * ``title`` + ``statement`` — compose a new problem inline. It is created
+          as ``visibility='contest'`` and ``status='published'``: published so the
+          judge accepts submissions, contest-only so it never shows up in the
+          public problem list while the tournament is running.
+
+        ``label`` is capped at 5 chars and (contest, label) / (contest, order) are
+        unique. A client that guesses ``order`` from the current problem count can
         collide with an existing row, so anything that would violate a
         constraint comes back as a 400 with a readable message instead of a 500.
         """
@@ -186,20 +194,55 @@ class ContestViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Only the contest creator or an admin can modify problems.')
 
         problem_id = request.data.get('problem')
+        inline_title = (request.data.get('title') or '').strip()
+        inline_statement = (request.data.get('statement') or '').strip()
+
+        if problem_id and (inline_title or inline_statement):
+            return Response(
+                {'error': 'Provide either "problem" or "title"+"statement", not both.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not problem_id and not (inline_title and inline_statement):
+            return Response(
+                {'error': 'Provide either "problem" or "title" and "statement".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Existing-problem mode: resolve (and 404 on) the referenced problem before
+        # anything is written, so a bad reference cannot leave a stray row behind.
+        problem = None
+        if problem_id:
+            try:
+                problem = Problem.objects.get(pk=problem_id)
+            except (Problem.DoesNotExist, ValidationError, ValueError, TypeError):
+                return Response({'error': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Everything below is cheap validation that must reject with 400 before the
+        # transaction opens.
         label = request.data.get('label')
-        order = request.data.get('order')
-        points = request.data.get('points', 0)
-
-        try:
-            problem = Problem.objects.get(pk=problem_id)
-        except (Problem.DoesNotExist, ValidationError, ValueError, TypeError):
-            return Response({'error': 'Problem not found.'}, status=status.HTTP_404_NOT_FOUND)
-
         if not label:
-            label = problem.title[:5]
+            label = (inline_title if problem is None else problem.title)[:5]
         label = str(label).strip()[:5]
         if not label:
             return Response({'error': 'Label is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            points = int(request.data.get('points') or 0)
+        except (TypeError, ValueError):
+            return Response({'error': 'Points must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        difficulty = request.data.get('difficulty') or 'easy'
+        if difficulty not in dict(Problem.DIFFICULTY_CHOICES):
+            return Response({'error': 'Unknown difficulty.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            time_ms = int(request.data.get('time_ms') or 1000)
+            memory_mb = int(request.data.get('memory_mb') or 256)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'time_ms and memory_mb must be integers.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         existing = ContestProblem.objects.filter(contest=contest)
         if existing.filter(label=label).exists():
@@ -207,7 +250,7 @@ class ContestViewSet(viewsets.ModelViewSet):
                 {'error': f'Label "{label}" is already used in this contest.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if existing.filter(problem=problem).exists():
+        if problem is not None and existing.filter(problem=problem).exists():
             return Response(
                 {'error': 'Problem already in contest.'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -215,7 +258,7 @@ class ContestViewSet(viewsets.ModelViewSet):
 
         # Fall back to the next free slot when the requested order is taken or
         # was not supplied, so the UI can add several problems in a row.
-        requested_order = order
+        requested_order = request.data.get('order')
         try:
             requested_order = int(requested_order)
         except (TypeError, ValueError):
@@ -229,6 +272,19 @@ class ContestViewSet(viewsets.ModelViewSet):
 
         try:
             with transaction.atomic():
+                # Created inside the transaction together with the contest link:
+                # a failure below must not leave an unattached problem behind.
+                if problem is None:
+                    problem = Problem.objects.create(
+                        title=inline_title,
+                        statement=inline_statement,
+                        difficulty=difficulty,
+                        time_ms=time_ms,
+                        memory_mb=memory_mb,
+                        status='published',
+                        visibility='contest',
+                        author=user,
+                    )
                 contest_problem, created = ContestProblem.objects.get_or_create(
                     contest=contest,
                     problem=problem,
@@ -253,6 +309,56 @@ class ContestViewSet(viewsets.ModelViewSet):
 
         serializer = ContestProblemSerializer(contest_problem)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated],
+            url_path=r'problems/(?P<problem_id>[^/.]+)/statement')
+    def problem_statement(self, request, pk=None, problem_id=None):
+        """Serve one contest problem's statement to people allowed to see it.
+
+        Contest-only problems are deliberately absent from ``/problems/``, so the
+        arena needs its own read path. Access is limited to the contest
+        owner/teacher/admin and registered participants, and only once the
+        contest has started — reading the statement early would leak it.
+        """
+        contest = self.get_object()
+        user = request.user
+        role = getattr(user, 'role', None)
+
+        if role != 'admin' and getattr(contest, 'created_by_id', None) != user.pk:
+            if not ContestRegistration.objects.filter(contest=contest, user=user).exists():
+                raise PermissionDenied('You are not registered for this contest.')
+
+        if timezone.now() < contest.start_time:
+            return Response(
+                {'error': 'This contest has not started yet.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        contest_problem = (
+            ContestProblem.objects
+            .select_related('problem')
+            .filter(contest=contest, problem_id=problem_id)
+            .first()
+        )
+        if contest_problem is None:
+            return Response({'error': 'Problem not in contest.'}, status=status.HTTP_404_NOT_FOUND)
+
+        problem = contest_problem.problem
+        return Response({
+            'problem': str(problem.pk),
+            'slug': problem.slug,
+            'title': problem.title,
+            'difficulty': problem.difficulty,
+            'label': contest_problem.label,
+            'points': contest_problem.points,
+            'time_ms': problem.time_ms,
+            'memory_mb': problem.memory_mb,
+            'statement_html': problem.statement_html,
+            'sample_test_cases': [
+                {'input': tc.input, 'expected_output': tc.expected_output}
+                for tc in problem.test_cases.filter(is_sample=True)
+            ],
+        })
 
     @action(detail=True, methods=['delete'], permission_classes=[IsTeacherOrAdmin])
     def remove_problem(self, request, pk=None):

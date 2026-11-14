@@ -30,6 +30,10 @@ class Problem(models.Model):
         ('draft', 'Draft'),
         ('published', 'Published'),
     ]
+    VISIBILITY_CHOICES = [
+        ('public', 'Public'),
+        ('contest', 'Contest only'),
+    ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     title = models.CharField(max_length=200)
@@ -40,6 +44,12 @@ class Problem(models.Model):
     time_ms = models.PositiveIntegerField(default=1000)
     memory_mb = models.PositiveIntegerField(default=256)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='draft')
+    # 'public' problems are listed for everyone. 'contest' problems are created
+    # inside a contest and stay out of the public problem list while any contest
+    # they belong to has not finished yet.
+    visibility = models.CharField(
+        max_length=10, choices=VISIBILITY_CHOICES, default='public', db_index=True,
+    )
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
