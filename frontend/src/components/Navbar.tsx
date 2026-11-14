@@ -5,9 +5,9 @@ import { logout } from '../api/authApi';
 import { useAuthStore } from '../store/authStore';
 
 const navLinks = [
-  { to: '/courses', label: 'Курсы' },
+  { to: '/courses', label: 'Courses' },
   { to: '/problems', label: 'Problems' },
-  { to: '/contests', label: 'Контесты' },
+  { to: '/contests', label: 'Contests' },
   { to: '/submissions', label: 'Submissions', authOnly: true },
   { to: '/leaderboard', label: 'Leaderboard' },
 ];
