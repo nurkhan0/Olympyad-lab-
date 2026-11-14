@@ -47,6 +47,12 @@ export default function TeacherLayout() {
           >
             👥 Студенты
           </Link>
+          <Link
+            to="/teacher/problems"
+            className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100"
+          >
+            🧩 Мои задачи
+          </Link>
         </nav>
 
         <div className="border-t border-gray-200 px-4 py-4">

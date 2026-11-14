@@ -677,6 +677,38 @@ class TestContestProblemManagement:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data) == 1
 
+    def test_add_problem_created_from_scratch(self):
+        """UI flow: teacher creates a problem, then adds it by the returned id."""
+        teacher = UserFactory(role="teacher")
+        contest = make_contest(created_by=teacher)
+        client = auth_client(teacher)
+
+        created = client.post(
+            reverse("problems-manage"),
+            {
+                "title": "Fresh problem",
+                "difficulty": "easy",
+                "statement": "Print the sum of two numbers.",
+                "time_ms": 1000,
+                "memory_mb": 256,
+                "tags": [],
+            },
+            format="json",
+        )
+        assert created.status_code == status.HTTP_201_CREATED
+        problem_id = created.data["id"]
+
+        url = reverse("contest-add-problem", kwargs={"pk": contest.pk})
+        response = client.post(
+            url,
+            {"problem": problem_id, "label": "A", "order": 0, "points": 100},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert ContestProblem.objects.filter(contest=contest, problem_id=problem_id).exists()
+
+
 
 @pytest.mark.django_db
 class TestContestSubmissionList:

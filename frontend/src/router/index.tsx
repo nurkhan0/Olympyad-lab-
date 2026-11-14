@@ -31,6 +31,7 @@ import TeacherModuleManagePage from '../pages/teacher/ModuleManagePage';
 import TeacherLessonManagePage from '../pages/teacher/LessonManagePage';
 import TeacherMaterialManagePage from '../pages/teacher/MaterialManagePage';
 import TeacherStudentListPage from '../pages/teacher/StudentListPage';
+import TeacherProblemsPage from '../pages/teacher/ProblemListPage';
 import StudentAnalyticsPage from '../pages/StudentAnalyticsPage';
 import CourseAnalyticsPage from '../pages/CourseAnalyticsPage';
 import ContestCatalogPage from '../pages/ContestCatalogPage';
@@ -148,6 +149,7 @@ export default function AppRouter() {
           <Route path="courses/:courseId/modules/:moduleId/lessons/:lessonId/materials" element={<TeacherMaterialManagePage />} />
           <Route path="courses/:courseId/analytics" element={<CourseAnalyticsPage />} />
           <Route path="students" element={<TeacherStudentListPage />} />
+          <Route path="problems" element={<TeacherProblemsPage />} />
         </Route>
 
         <Route path="*" element={<NotFoundPage />} />

@@ -11,7 +11,7 @@ from rest_framework.views import APIView
 from apps.users.authentication import BearerTokenAuthentication
 
 from ..models import Problem, TestCase
-from ..permissions import IsAdminUser
+from ..permissions import IsProblemAuthorOrAdmin
 from ..serializers import TestCaseSerializer
 
 MAX_UPLOAD_SIZE = 10 * 1024 * 1024
@@ -19,10 +19,13 @@ MAX_UPLOAD_SIZE = 10 * 1024 * 1024
 
 class ProblemTestCaseMixin:
     authentication_classes = [BearerTokenAuthentication]
-    permission_classes = [IsAdminUser]
+    # Admins manage every problem; teachers manage the problems they authored.
+    permission_classes = [IsProblemAuthorOrAdmin]
 
     def get_problem(self):
-        return get_object_or_404(Problem, slug=self.kwargs['slug'])
+        problem = get_object_or_404(Problem, slug=self.kwargs['slug'])
+        self.check_object_permissions(self.request, problem)
+        return problem
 
 
 class TestCaseListCreateView(ProblemTestCaseMixin, ListCreateAPIView):

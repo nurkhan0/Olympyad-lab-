@@ -68,6 +68,56 @@ class AdminProblemDetailSerializer(AdminProblemListSerializer):
         return instance
 
 
+class ManageableProblemSerializer(serializers.ModelSerializer):
+    """Problem row for teachers/admins picking problems for a contest.
+
+    Unlike the public list this also exposes drafts the caller may use, and
+    tells the client whether the row belongs to the caller.
+    """
+
+    tags = TagSerializer(many=True, read_only=True)
+    is_author = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Problem
+        fields = (
+            'id', 'slug', 'title', 'difficulty', 'status', 'solver_count',
+            'tags', 'is_author', 'created_at',
+        )
+        read_only_fields = fields
+
+    def get_is_author(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        return bool(user and user.is_authenticated and obj.author_id == user.pk)
+
+
+class ManageableProblemCreateSerializer(AdminProblemDetailSerializer):
+    """Create a problem from the teacher/admin "manage problems" endpoint.
+
+    Teachers always create drafts (tests are reviewed before publishing);
+    admins may pass ``status`` to publish immediately.
+    """
+
+    status = serializers.ChoiceField(choices=Problem.STATUS_CHOICES, required=False)
+
+    class Meta(AdminProblemDetailSerializer.Meta):
+        read_only_fields = (
+            'id', 'slug', 'statement_html', 'solver_count', 'created_at',
+        )
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        role = getattr(getattr(request, 'user', None), 'role', None)
+        if role != 'admin':
+            attrs['status'] = 'draft'
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.setdefault('status', 'draft')
+        return super().create(validated_data)
+
+
 class TestCaseSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestCase

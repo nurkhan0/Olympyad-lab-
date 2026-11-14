@@ -1,4 +1,12 @@
-import type { Problem, ProblemDetail, ProblemFilters } from '../types/problem';
+import type {
+  Problem,
+  ProblemDetail,
+  ProblemFilters,
+  ManageableProblem,
+  ManageableProblemFilters,
+  PaginatedManageableProblems,
+  CreateManageableProblemPayload,
+} from '../types/problem';
 import api from './axios';
 
 export interface PaginatedProblems {
@@ -16,3 +24,11 @@ export const getProblem = (slug: string) =>
 
 export const bookmarkProblem = (slug: string) =>
   api.post(`/problems/${slug}/bookmark/`);
+
+// --- Teacher/admin problem management (pick or create problems for a contest) ---
+
+export const getManageableProblems = (f: ManageableProblemFilters = {}) =>
+  api.get<PaginatedManageableProblems>('/problems/manage/', { params: f });
+
+export const createManageableProblem = (dto: CreateManageableProblemPayload) =>
+  api.post<ManageableProblem>('/problems/manage/', dto);
