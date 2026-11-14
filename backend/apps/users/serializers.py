@@ -1,6 +1,7 @@
 import re
 from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
+from django.core.validators import RegexValidator
 from rest_framework import serializers
 from .models import CustomUser
 
@@ -91,9 +92,36 @@ class MeSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomUser
         fields = ['id', 'email', 'handle', 'role', 'rating',
-                  'is_verified', 'is_banned', 'avatar_url', 'created_at']
+                  'is_verified', 'is_banned', 'avatar_url',
+                  'school', 'class_name', 'created_at']
+
 
 class MeUpdateSerializer(serializers.ModelSerializer):
+    """Profile fields a user may change about themselves.
+
+    `email` is deliberately absent: it is the login identifier and the password
+    reset target, so changing it needs a verified flow, not a profile PATCH.
+    `role`, `is_staff`, `is_superuser` and `rating` are likewise excluded —
+    they are assigned by admins, never by the account owner.
+    """
+
+    handle = serializers.CharField(
+        max_length=30,
+        required=False,
+        validators=[RegexValidator(
+            regex=HANDLE_REGEX,
+            message='Handle must be 3–20 characters: letters, digits, or underscores.',
+        )],
+    )
+
     class Meta:
         model = CustomUser
-        fields = ['avatar_url']
+        fields = ['handle', 'avatar_url', 'school', 'class_name']
+
+    def validate_handle(self, value):
+        qs = CustomUser.objects.filter(handle__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('This handle is already taken.')
+        return value

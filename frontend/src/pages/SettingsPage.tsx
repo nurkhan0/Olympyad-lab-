@@ -11,7 +11,6 @@ import { useAuthStore } from '../store/authStore';
 import type { User } from '../types/auth';
 
 const settingsSchema = z.object({
-  email: z.string().email('Некорректный email').min(1, 'Обязательное поле'),
   handle: z.string().min(3, 'Минимум 3 символа').max(20, 'Максимум 20 символов'),
   school: z.string().max(200, 'Максимум 200 символов').optional(),
   class_name: z.string().max(100, 'Максимум 100 символов').optional(),
@@ -49,7 +48,6 @@ export default function SettingsPage() {
   } = useForm<SettingsForm>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
-      email: me?.email ?? '',
       handle: me?.handle ?? '',
       school: me?.school ?? '',
       class_name: me?.class_name ?? '',
@@ -72,9 +70,7 @@ export default function SettingsPage() {
     } catch (error: any) {
       if (error.response?.data) {
         const errData = error.response.data;
-        if (typeof errData === 'object' && errData.email) {
-          setServerError(errData.email[0] ?? 'Ошибка сохранения');
-        } else if (typeof errData === 'object' && errData.handle) {
+        if (typeof errData === 'object' && errData.handle) {
           setServerError(errData.handle[0] ?? 'Ошибка сохранения');
         } else if (typeof errData === 'string') {
           setServerError(errData);
@@ -110,12 +106,14 @@ export default function SettingsPage() {
             id="email"
             type="email"
             autoComplete="email"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            {...register('email')}
+            value={me.email}
+            readOnly
+            disabled
+            className="w-full cursor-not-allowed rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-gray-500"
           />
-          {errors.email && (
-            <p className="mt-1 text-sm text-red-600">{errors.email.message}</p>
-          )}
+          <p className="mt-1 text-xs text-gray-500">
+            Почта используется для входа и не меняется в настройках профиля.
+          </p>
         </div>
 
         <div>
