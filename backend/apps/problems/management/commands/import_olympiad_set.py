@@ -25,14 +25,21 @@ Usage::
     python manage.py import_olympiad_set --all --group single --creator nurkhan
 
 Problems are created published but contest-only, so they stay out of the public
-problem list until the contest ends. ``--group set`` (default) creates one
-contest per source tour; ``--group single`` merges every selected set into one
-contest with sequentially assigned labels.
+problem list until the contest ends. ``--group set`` (default) creates one contest
+per source tour; ``--group single`` merges every selected set into one contest
+with sequentially assigned labels.
 
-Every run is idempotent: a problem is matched by its deterministic slug, so
-re-running the same command updates statements and samples instead of creating
-duplicates. Contest rows are the exception — pass ``--contest-title`` or expect
-one new contest per run.
+The command is idempotent and safe to run on every deploy:
+
+* a problem is matched by its deterministic slug, so re-running refreshes the
+  statement and samples instead of duplicating rows;
+* a contest is matched by its exact title, so re-running updates it in place
+  instead of creating a second one. ``start_time`` is only moved when ``--start``
+  is passed explicitly, so a deploy never silently reschedules a live contest.
+
+The default start is one week from now, which keeps registration open
+(``registration_end`` equals ``start_time`` — the domain rule enforced by
+``ContestSerializer``). Pass ``--start`` to pin an exact date.
 """
 
 import json
@@ -52,6 +59,7 @@ from apps.users.models import CustomUser
 
 DEFAULT_DATA = Path(settings.BASE_DIR) / "data" / "olympiad_informatics_sets.json"
 DEFAULT_POINTS = 100
+DEFAULT_START_IN_DAYS = 7
 MERGED_CONTEST_TITLE = "Республиканская олимпиада по информатике (2-й этап)"
 
 
@@ -67,8 +75,13 @@ class Command(BaseCommand):
             "--group", choices=("set", "single"), default="set",
             help="'set' = one contest per source tour; 'single' = one contest for all sets.",
         )
-        parser.add_argument("--start",
-                            help="Contest start, e.g. 2026-11-20T09:00:00Z (default: now).")
+        parser.add_argument(
+            "--start",
+            help=(
+                "Contest start, e.g. 2026-11-20T09:00:00Z. Also moves the start of an "
+                f"existing contest. Default: {DEFAULT_START_IN_DAYS} days from now."
+            ),
+        )
         parser.add_argument("--duration", type=int, default=120, help="Contest length in minutes.")
         parser.add_argument("--creator", help="Handle or e-mail of the contest owner.")
         parser.add_argument("--dry-run", action="store_true")
@@ -90,6 +103,9 @@ class Command(BaseCommand):
                 raise CommandError(f"Unknown set key(s): {', '.join(sorted(unknown))}")
             sets = [s for s in sets if s["key"] in wanted]
 
+        # An explicit --start is the only thing allowed to move an existing
+        # contest; otherwise the stored start time is left untouched.
+        start_explicit = options["start"] is not None
         start = self._parse_start(options["start"])
         creator = self._resolve_creator(options["creator"])
         dry_run = options["dry_run"]
@@ -99,19 +115,20 @@ class Command(BaseCommand):
 
         if options["group"] == "single":
             self._create_contest(MERGED_CONTEST_TITLE, sets, start, options["duration"],
-                                 creator, dry_run)
+                                 creator, dry_run, start_explicit)
             return
 
         for entry in sets:
             self._create_contest(entry["contest_title"], [entry], start, options["duration"],
-                                 creator, dry_run)
+                                 creator, dry_run, start_explicit)
 
     # -------------------------------------------------------------------- helpers
 
     @staticmethod
     def _parse_start(value):
+        """Parse --start, or default to a week from now so registration is open."""
         if not value:
-            return timezone.now()
+            return timezone.now() + timedelta(days=DEFAULT_START_IN_DAYS)
         parsed = parse_datetime(value)
         if parsed is None:
             raise CommandError(f"Unrecognized --start value: {value!r}")
@@ -193,14 +210,14 @@ class Command(BaseCommand):
                 return candidate
         raise CommandError("A contest cannot hold more than 26 problems.")
 
-    def _create_contest(self, title: str, sets, start, duration, creator, dry_run) -> None:
+    def _create_contest(self, title: str, sets, start, duration, creator, dry_run,
+                        start_explicit: bool) -> None:
         prepared = []
         for entry in sets:
             for data_problem in entry["problems"]:
-                problem = self._upsert_problem(
-                    entry["key"], data_problem["label"], data_problem, dry_run
+                prepared.append(
+                    self._upsert_problem(entry["key"], data_problem["label"], data_problem, dry_run)
                 )
-                prepared.append(problem)
 
         if dry_run:
             self.stdout.write(f"[dry-run] contest '{title}' ← {len(prepared)} problem(s)")
@@ -208,29 +225,63 @@ class Command(BaseCommand):
                 self.stdout.write(f"    {getattr(problem, 'slug', '?')}")
             return
 
-        with transaction.atomic():
-            contest = Contest.objects.create(
-                title=title,
-                description="",
-                contest_type="CF",
-                start_time=start,
-                duration_minutes=duration,
-                registration_start=start - timedelta(days=7),
-                registration_end=start,
-                is_public=True,
-                is_published=True,
-                is_rated=False,
-                created_by=creator,
-            )
-            used = set()
-            for order, problem in enumerate(prepared, start=1):
-                label = self._next_label(used)
-                used.add(label)
+        contest, created = self._upsert_contest(title, start, duration, creator, start_explicit)
+
+        used = set()
+        for order, problem in enumerate(prepared, start=1):
+            label = self._next_label(used)
+            used.add(label)
+            link = ContestProblem.objects.filter(contest=contest, problem=problem).first()
+            if link is None:
                 ContestProblem.objects.create(
                     contest=contest, problem=problem, label=label, order=order,
                     points=DEFAULT_POINTS,
                 )
+            else:
+                link.label = label
+                link.order = order
+                link.points = DEFAULT_POINTS
+                link.save(update_fields=["label", "order", "points"])
 
+        verb = "created" if created else "updated"
         self.stdout.write(
-            self.style.SUCCESS(f"contest #{contest.pk} '{contest.title}' ← {len(prepared)} problem(s)")
+            self.style.SUCCESS(
+                f"contest #{contest.pk} {verb} '{contest.title}' ← {len(prepared)} problem(s), "
+                f"start {contest.start_time.isoformat()}"
+            )
         )
+
+    def _upsert_contest(self, title, start, duration, creator, start_explicit):
+        """Find a contest by exact title, else create it. Returns (contest, created)."""
+        contest = Contest.objects.filter(title=title).first()
+
+        if contest is None:
+            with transaction.atomic():
+                contest = Contest.objects.create(
+                    title=title,
+                    description="",
+                    contest_type="CF",
+                    start_time=start,
+                    duration_minutes=duration,
+                    registration_start=start - timedelta(days=7),
+                    registration_end=start,
+                    is_public=True,
+                    is_published=True,
+                    is_rated=False,
+                    created_by=creator,
+                )
+            return contest, True
+
+        contest.duration_minutes = duration
+        contest.contest_type = "CF"
+        contest.is_public = True
+        contest.is_published = True
+        contest.is_rated = False
+        if contest.created_by is None:
+            contest.created_by = creator
+        if start_explicit:
+            contest.start_time = start
+        contest.registration_start = contest.start_time - timedelta(days=7)
+        contest.registration_end = contest.start_time
+        contest.save()
+        return contest, False

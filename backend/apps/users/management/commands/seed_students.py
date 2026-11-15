@@ -14,6 +14,7 @@ unless ``--update`` is passed, in which case the profile fields are refreshed
 but the password is left alone.
 """
 
+import os
 import secrets
 import string
 from datetime import datetime, timezone as dt_timezone
@@ -78,13 +79,30 @@ class Command(BaseCommand):
             action="store_true",
             help="Refresh school/class of existing students instead of skipping them.",
         )
+        parser.add_argument(
+            "--password",
+            default=os.environ.get("SEED_STUDENT_PASSWORD") or None,
+            help=(
+                "Use one password for every created student instead of generating "
+                "unique ones. Also read from SEED_STUDENT_PASSWORD. Leave unset to "
+                "generate and print per-student passwords."
+            ),
+        )
 
     def handle(self, *args, **options):
         registered = self._parse_date(options["registered"])
         domain = options["domain"].lstrip("@")
         dry_run = options["dry_run"]
+        shared_password = options["password"]
 
         self.stdout.write(f"Registration date: {registered.isoformat()}")
+        if shared_password:
+            self.stdout.write(
+                self.style.WARNING(
+                    "Using one shared password for every new student "
+                    "(from --password / SEED_STUDENT_PASSWORD)."
+                )
+            )
         if dry_run:
             self.stdout.write(self.style.WARNING("DRY RUN — no rows will be written."))
 
@@ -106,7 +124,7 @@ class Command(BaseCommand):
                 created.append((handle, email, "<generated>"))
                 continue
 
-            password = _password()
+            password = shared_password or _password()
             with transaction.atomic():
                 user = CustomUser.objects.create_user(
                     email=email,

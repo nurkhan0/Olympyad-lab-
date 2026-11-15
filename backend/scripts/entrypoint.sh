@@ -6,6 +6,19 @@ set -e
 # Render free web service (no separate worker, no Blueprint).
 ROLE="${ROLE:-web}"
 
+# Populate problems, contests and students. Idempotent by design (see
+# apps/problems/management/commands/seed_olympiad_data.py), so running it on
+# every deploy refreshes statements without duplicating rows or resetting
+# passwords. A failure is reported but must not stop the service from serving.
+seed_data() {
+    if [ "${SEED_ON_BOOT:-true}" != "true" ]; then
+        echo "[entrypoint] SEED_ON_BOOT != true — skipping data seed."
+        return 0
+    fi
+    echo "[entrypoint] Seeding olympiad data (idempotent)..."
+    python manage.py seed_olympiad_data || echo "[entrypoint] WARNING: data seed failed, continuing"
+}
+
 echo "[entrypoint] Waiting for PostgreSQL at $POSTGRES_HOST:$POSTGRES_PORT..."
 until pg_isready -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -q; do sleep 1; done
 echo "[entrypoint] DB ready."
@@ -13,6 +26,7 @@ echo "[entrypoint] DB ready."
 if [ "$ROLE" = "web" ]; then
     echo "[entrypoint] Running migrations..."
     python manage.py migrate --noinput
+    seed_data
     mkdir -p /app/staticfiles /app/media
     chown -R appuser:appuser /app/staticfiles /app/media
     python manage.py collectstatic --noinput --clear
@@ -29,6 +43,7 @@ elif [ "$ROLE" = "worker" ]; then
 elif [ "$ROLE" = "all" ]; then
     echo "[entrypoint] Running migrations..."
     python manage.py migrate --noinput
+    seed_data
     mkdir -p /app/staticfiles /app/media
     chown -R appuser:appuser /app/staticfiles /app/media
     python manage.py collectstatic --noinput --clear

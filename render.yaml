@@ -24,6 +24,16 @@ services:
     envVars:
       - key: ROLE
         value: web
+      # entrypoint.sh runs `manage.py seed_olympiad_data` after migrate. It is
+      # idempotent (problems upserted by slug, contests matched by title,
+      # students skipped when the handle exists), so a redeploy refreshes
+      # statements without duplicating rows or resetting passwords. Set to
+      # 'false' to disable. Optional overrides, set as sync:false if needed:
+      # SEED_CONTEST_START (ISO datetime), SEED_REGISTERED (default 2026-11-10),
+      # SEED_STUDENT_PASSWORD (one shared password instead of generated ones),
+      # SEED_STUDENT_DOMAIN (default olympiad.local).
+      - key: SEED_ON_BOOT
+        value: 'true'
       - key: DEBUG
         value: 'False'
       - key: SECURE_HSTS_SECONDS
