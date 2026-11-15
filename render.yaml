@@ -29,7 +29,9 @@ services:
       # students skipped when the handle exists), so a redeploy refreshes
       # statements without duplicating rows or resetting passwords. Set to
       # 'false' to disable. Optional overrides, set as sync:false if needed:
-      # SEED_CONTEST_START (ISO datetime), SEED_REGISTERED (default 2026-11-10),
+      # SEED_CONTEST_START (ISO datetime),
+      # SEED_CONTEST_CREATOR (handle/e-mail owning the contests; default: first
+      # superuser), SEED_REGISTERED (default 2026-11-10),
       # SEED_STUDENT_PASSWORD (one shared password instead of generated ones),
       # SEED_STUDENT_DOMAIN (default olympiad.local).
       - key: SEED_ON_BOOT

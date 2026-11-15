@@ -20,6 +20,8 @@ Environment variables (all optional):
   generate a unique password per student and print it once to the log.
 * ``SEED_STUDENT_DOMAIN``  — e-mail domain for the generated addresses;
   default: ``olympiad.local``.
+* ``SEED_CONTEST_CREATOR`` — handle or e-mail the contests belong to; default:
+  the first superuser, which is the account from the initial-users migration.
 
 Usage::
 
@@ -64,8 +66,9 @@ class Command(BaseCommand):
             }
             if options["file"]:
                 kwargs["file"] = options["file"]
-            if options["creator"]:
-                kwargs["creator"] = options["creator"]
+            creator = options["creator"] or os.environ.get("SEED_CONTEST_CREATOR")
+            if creator:
+                kwargs["creator"] = creator
             # Only pass --start when configured, so a redeploy never moves the
             # start time of a contest that already exists.
             seed_start = os.environ.get("SEED_CONTEST_START")
