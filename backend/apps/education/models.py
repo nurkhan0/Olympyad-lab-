@@ -1,5 +1,6 @@
 ﻿import uuid
 
+import mistune
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -152,6 +153,15 @@ class Lesson(models.Model):
     class Meta:
         ordering = ["order"]
         unique_together = [("module", "order")]
+
+    def save(self, *args, **kwargs):
+        # Render the lesson text once, here, so every surface that writes a
+        # lesson (teacher API, admin, seed script) gets the same HTML. The
+        # serializer keeps content_html read-only; the frontend renders it via
+        # dangerouslySetInnerHTML and falls back to plain text when empty.
+        if self.content:
+            self.content_html = mistune.html(self.content)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.module.course.title} — {self.module.title} — Lesson {self.order}: {self.title}"

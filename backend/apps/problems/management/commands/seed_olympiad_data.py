@@ -60,6 +60,8 @@ class Command(BaseCommand):
                             help="Report what would be written, write nothing.")
         parser.add_argument("--skip-problems", action="store_true",
                             help="Do not import tour problems, tests or custom contests.")
+        parser.add_argument("--skip-course", action="store_true",
+                            help="Do not fill the demo Python course with lessons.")
         parser.add_argument("--skip-activity", action="store_true",
                             help="Do not seed registrations and submissions.")
         parser.add_argument("--skip-students", action="store_true",
@@ -77,6 +79,11 @@ class Command(BaseCommand):
             self._seed_problems(options, dry_run, verbosity)
         else:
             self.stdout.write("skipping problems (--skip-problems)")
+
+        if not options["skip_course"]:
+            self._seed_course(dry_run, verbosity)
+        else:
+            self.stdout.write("skipping course content (--skip-course)")
 
         # Students come before the activity: seeding attempts for handles that
         # do not exist yet would silently skip every row.
@@ -151,3 +158,7 @@ class Command(BaseCommand):
         for entry in json.loads(CONTESTS_FILE.read_text(encoding="utf-8")):
             call_command("seed_contest_activity", contest_title=entry["title"],
                          dry_run=dry_run, verbosity=verbosity)
+
+    def _seed_course(self, dry_run, verbosity):
+        """Lessons, text materials and public tasks for the demo Python course."""
+        call_command("seed_course_demo", dry_run=dry_run, verbosity=verbosity)
