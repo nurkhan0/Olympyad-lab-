@@ -12,6 +12,11 @@ Usage::
 It is idempotent: a student whose handle or e-mail already exists is skipped
 unless ``--update`` is passed, in which case the profile fields are refreshed
 but the password is left alone.
+
+``--reset-password`` is the deliberate exception: it rewrites the password of
+existing students. Use it once to hand out a known password, then turn
+``SEED_RESET_STUDENT_PASSWORD`` off again — left on, every boot would overwrite
+whatever the students changed it to.
 """
 
 import os
@@ -89,11 +94,23 @@ class Command(BaseCommand):
             ),
         )
 
+        parser.add_argument(
+            "--reset-password",
+            action="store_true",
+            default=os.environ.get("SEED_RESET_STUDENT_PASSWORD", "").lower() in ("1", "true", "yes"),
+            help=(
+                "Rewrite the password of students that already exist, instead of "
+                "skipping them. Combine with --password to give the whole cohort one "
+                "known password. Also enabled by SEED_RESET_STUDENT_PASSWORD=true."
+            ),
+        )
+
     def handle(self, *args, **options):
         registered = self._parse_date(options["registered"])
         domain = options["domain"].lstrip("@")
         dry_run = options["dry_run"]
         shared_password = options["password"]
+        reset_password = options["reset_password"]
 
         self.stdout.write(f"Registration date: {registered.isoformat()}")
         if shared_password:
@@ -103,20 +120,35 @@ class Command(BaseCommand):
                     "(from --password / SEED_STUDENT_PASSWORD)."
                 )
             )
+        if reset_password:
+            self.stdout.write(
+                self.style.WARNING("RESET PASSWORD is on: existing students get a new password.")
+            )
         if dry_run:
             self.stdout.write(self.style.WARNING("DRY RUN — no rows will be written."))
 
-        created, skipped, updated = [], [], []
+        created, skipped, updated, reset = [], [], [], []
         for name, handle in DEFAULT_STUDENTS:
             email = f"{handle}@{domain}"
             existing = CustomUser.objects.filter(handle__iexact=handle).first()
             if existing:
+                changed = False
                 if options["update"]:
                     existing.school = "Школа №1"
                     existing.class_name = "10"
                     existing.save(update_fields=["school", "class_name"])
                     updated.append((existing.handle, existing.email))
-                else:
+                    changed = True
+                if reset_password:
+                    if dry_run:
+                        reset.append((handle, email, "<generated>"))
+                    else:
+                        new_password = shared_password or _password()
+                        existing.set_password(new_password)
+                        existing.save(update_fields=["password"])
+                        reset.append((handle, email, new_password))
+                    changed = True
+                if not changed:
                     skipped.append((handle, email))
                 continue
 
@@ -149,6 +181,10 @@ class Command(BaseCommand):
                 self.stdout.write(f"  {handle:22s} {email}")
         if updated:
             self.stdout.write(f"updated: {len(updated)}")
+        if reset:
+            self.stdout.write(self.style.SUCCESS(f"password reset: {len(reset)}"))
+            for handle, email, password in reset:
+                self.stdout.write(f"  {handle:22s} {email:38s} {password}")
 
     @staticmethod
     def _parse_date(value: str) -> datetime:
