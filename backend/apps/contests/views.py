@@ -545,6 +545,11 @@ def compute_standings(contest):
         cp.problem_id: cp.points for cp in contest.contest_problems.all()
     }
 
+    # ContestProblem.label carries the A/B/C shown on the scoreboard.
+    problem_labels = {
+        cp.problem_id: cp.label for cp in contest.contest_problems.all()
+    }
+
     # Group by user
     user_data = {}
     for sub in submissions:
@@ -566,7 +571,7 @@ def compute_standings(contest):
             user_data[uid]['problems'][problem_id] = {
                 'problem_id': problem_id,
                 'problem_title': sub.problem.title,
-                'label': None,
+                'label': problem_labels.get(sub.problem_id),
                 'points': points,
                 'solved': False,
                 'attempts': 0,
